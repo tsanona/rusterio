@@ -1,0 +1,11 @@
+*
+!*/
+
+!.gitignore
+!LICENSE
+!*.rs
+!*.toml
+!*.sh
+
+/.*/
+/target/

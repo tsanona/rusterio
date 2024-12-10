@@ -1,0 +1,21 @@
+[package]
+name = "sentinel2array"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gdal = { git = "https://github.com/georust/gdal.git", features = ["ndarray"]}
+ndarray = "0.16.1"
+proj = { version = "0.27.2", features = ["geo-types"] }
+thiserror = "2.0.6"
+tokio = { version = "1.41.1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio-stream = "0.1.16"
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["async", "async_tokio"] }
+image = "0.25.5"
+rstest = "0.23.0"
+
+[[bench]]
+name = "benchmarks"
+harness = false
