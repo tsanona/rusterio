@@ -2,8 +2,8 @@
 
 use gdal::{errors::GdalError, Dataset, Metadata, MetadataEntry};
 use itertools::Itertools;
-use ndarray::{Array2, Array3, ShapeError};
 use nalgebra::Point2;
+use ndarray::{Array2, Array3, ShapeError};
 use proj::ProjCreateError;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
@@ -14,7 +14,7 @@ use thiserror;
 
 use rasters;
 use rasters::prelude::{
-    transform_from_gdal, transform_window, ChunkConfig, ChunkReader, DatasetReader, PixelTransform
+    transform_from_gdal, transform_window, ChunkConfig, ChunkReader, DatasetReader, PixelTransform,
 };
 
 pub type Result<T> = std::result::Result<T, RasterError>;
@@ -138,17 +138,17 @@ impl Raster {
                     .map_err(RasterError::RastersError)
             })
             .collect::<Result<Vec<(Array2<u16>, PixelTransform)>>>()?;
-        Ok(Array3::from_shape_fn((bands.len(), window.0, window.1), 
-        |(c, x, y)| {
-            let (band_raster, transform) = &band_rasters[c];
-            let corrected_coords = transform.transform_point(&Point2::new(x as f64, y as f64));
-            band_raster[[corrected_coords.x as usize, corrected_coords.y as usize]]
-        }))
+        Ok(Array3::from_shape_fn(
+            (bands.len(), window.0, window.1),
+            |(c, x, y)| {
+                let (band_raster, transform) = &band_rasters[c];
+                let corrected_coords = transform.transform_point(&Point2::new(x as f64, y as f64));
+                band_raster[[corrected_coords.x as usize, corrected_coords.y as usize]]
+            },
+        ))
     }
 
-    fn parse_dataset(
-        dataset: &Dataset,
-    ) -> Result<(RasterMetadata, RasterSubDatasets)> {
+    fn parse_dataset(dataset: &Dataset) -> Result<(RasterMetadata, RasterSubDatasets)> {
         let mut raster_metadata = RasterMetadata::new();
         let mut raster_subdataset_paths = RasterSubDatasets::new();
         for MetadataEntry { domain, key, value } in dataset.metadata() {
@@ -236,7 +236,8 @@ mod tests {
         print!(
             "{:#?}",
             test_raster
-                .read_bands(vec!["B4", "B3", "B2"], (0, 0), (125, 125)).unwrap()
+                .read_bands(vec!["B4", "B3", "B2"], (0, 0), (125, 125))
+                .unwrap()
         );
     }
 }
