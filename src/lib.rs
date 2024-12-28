@@ -10,9 +10,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use thiserror;
 
-use rasters;
 use rasters::prelude::{
     transform_from_gdal, transform_window, ChunkConfig, ChunkReader, DatasetReader, PixelTransform,
 };
