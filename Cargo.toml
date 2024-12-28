@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gdal = { git = "https://github.com/georust/gdal.git", features = ["ndarray"]}
-ndarray = "0.16.1"
-proj = { version = "0.27.2", features = ["geo-types"] }
-thiserror = "2.0.6"
-tokio = { version = "1.41.1", features = ["macros", "rt", "rt-multi-thread"] }
-tokio-stream = "0.1.16"
+gdal = "0.17.1" 
+ndarray = { version = "0.16.1", features = ["rayon"] }
+proj = { version = "0.28.0", features = ["geo-types"] }
+thiserror = "2.0.9"
+rasters = { git="https://github.com/tsanona/rasters.rs.git", features = ["use-rayon"] }
+rayon = "1.10.0"
+itertools = "0.13.0"
+nalgebra = "0.33.2"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async", "async_tokio"] }
