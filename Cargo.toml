@@ -15,7 +15,7 @@ nalgebra = "0.33.2"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async", "async_tokio"] }
-image = "0.25.5"
+ndarray-npy = "0.9.1"
 rstest = "0.23.0"
 
 [[bench]]

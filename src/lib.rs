@@ -205,6 +205,7 @@ impl Raster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray_npy::write_npy;
     use rstest::{fixture, rstest};
 
     const TEST_DATA: &str =
@@ -215,27 +216,23 @@ mod tests {
         Raster::new(TEST_DATA).unwrap()
     }
 
-    /*#[rstest]
-    fn it_works(test_raster: Raster) {
-        let b1 = test_raster.bands_info.get("B2").unwrap();
-        //let b2 = raster.bands_info.get("B2").unwrap();
-        //let (p1_x, p1_y) = b1.geo_transform.apply(0.0, 0.0);
-        //let (p2_x, p2_y) = b1.geo_transform.apply(0.0, 1.0);
-        //println!("{:?}", (p1_x - p2_x, p1_y - p2_y));
-        //let polygon = geo::Polygon::<f64>::try_from_wkt_str(raster.metadata.get("FOOTPRINT").unwrap().as_str()).unwrap();
-        //polygon = polygon.affine_transform(&geo::AffineTransform::from(raster.dataset().unwrap().geo_transform().unwrap()));
-        //println!("{:#?}", raster.metadata.get("FOOTPRINT"));
-        println!("{:#?}", b1.bounds);
-    }*/
-
     #[rstest]
-    fn play_ground(test_raster: Raster) {
-        //windows need reajusting for bands with different resolution
+    fn it_works(test_raster: Raster) {
         print!(
             "{:#?}",
             test_raster
                 .read_bands(vec!["B4", "B3", "B2"], (0, 0), (125, 125))
                 .unwrap()
         );
+    }
+
+    #[rstest]
+    fn play_ground(test_raster: Raster) {
+        let rgb = ((test_raster
+                .read_bands(vec!["B4", "B3", "B2"], (0, 0), (100, 100))
+                .unwrap().reversed_axes() / 100) * 255) / 100;
+
+        write_npy("dev/test.npy", &rgb);
+        //println!("{:?}", rgb);
     }
 }
