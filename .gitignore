@@ -8,4 +8,5 @@
 !*.sh
 
 /.*/
-/target/
+/target
+/dev

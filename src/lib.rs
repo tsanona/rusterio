@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 
 use gdal::{errors::GdalError, Dataset, Metadata, MetadataEntry};
-use itertools::Itertools;
 use nalgebra::Point2;
 use ndarray::{Array2, Array3, ShapeError};
 use proj::ProjCreateError;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -47,8 +46,8 @@ pub struct Raster {
 }
 
 impl Raster {
-    fn dataset(&self) -> gdal::errors::Result<Dataset> {
-        Dataset::open(&self.path)
+    fn dataset(&self) -> Result<Dataset> {
+        Dataset::open(&self.path).map_err(RasterError::GdalError)
     }
 }
 
@@ -64,7 +63,7 @@ struct BandInfo {
 }
 
 impl BandInfo {
-    pub fn dataset(&self) -> Result<Dataset> {
+    fn dataset(&self) -> Result<Dataset> {
         Dataset::open(&self.path).map_err(RasterError::GdalError)
     }
 }
@@ -93,33 +92,36 @@ impl Raster {
         })
     }
 
-    fn bands_info(&self, band: &str) -> Result<&BandInfo> {
+    fn band_info(&self, band: &str) -> Result<&BandInfo> {
         self.bands_info
             .get(band)
             .ok_or(RasterError::BandNotFound(band.into()))
     }
 
+    fn bands_info<'a>(&self, bands: &Vec<&'a str>) -> Result<Vec<(&'a str, &BandInfo)>> {
+        bands
+            .into_par_iter()
+            .map(|band| self.band_info(band).map(|band_info| (*band, band_info)))
+            .collect::<Result<Vec<(&str, &BandInfo)>>>()
+    }
+
     pub fn read_bands(
         &self,
-        bands: Vec<&str>,
+        bands: Vec<&'static str>,
         offset: (isize, isize),
         window: (usize, usize),
     ) -> Result<Array3<u16>> {
-        let highest_resolution_transform = bands
+        let bands_info = self.bands_info(&bands)?;
+
+        let highest_resolution_transform = bands_info
             .iter()
-            .map(|band| {
-                self.bands_info(band)
-                    .map(|band_info| band_info.geo_transform)
-            })
-            .process_results(|bands_info| {
-                bands_info.reduce(|prev, next| if prev.m11 < next.m11 { prev } else { next })
-            })?
+            .map(|(_, band_info)| band_info.geo_transform)
+            .reduce(|prev, next| if prev.m11 < next.m11 { prev } else { next })
             .unwrap();
 
-        let band_rasters = bands
-            .par_iter()
-            .map(|band| {
-                let band_info = self.bands_info(band)?;
+        let band_rasters = bands_info
+            .into_par_iter()
+            .map(|(band, band_info)| {
                 let transform = band_info
                     .geo_transform
                     .try_inverse()
@@ -136,6 +138,7 @@ impl Raster {
                     .map_err(RasterError::RastersError)
             })
             .collect::<Result<Vec<(Array2<u16>, PixelTransform)>>>()?;
+
         Ok(Array3::from_shape_fn(
             (bands.len(), window.0, window.1),
             |(c, x, y)| {
@@ -229,8 +232,12 @@ mod tests {
     #[rstest]
     fn play_ground(test_raster: Raster) {
         let rgb = ((test_raster
-                .read_bands(vec!["B4", "B3", "B2"], (0, 0), (100, 100))
-                .unwrap().reversed_axes() / 100) * 255) / 100;
+            .read_bands(vec!["B4", "B3", "B2"], (0, 0), (100, 100))
+            .unwrap()
+            .reversed_axes()
+            / 100)
+            * 255)
+            / 100;
 
         write_npy("dev/test.npy", &rgb);
         //println!("{:?}", rgb);

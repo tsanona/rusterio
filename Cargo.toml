@@ -10,7 +10,6 @@ proj = { version = "0.28.0", features = ["geo-types"] }
 thiserror = "2.0.9"
 rasters = { git="https://github.com/tsanona/rasters.rs.git", features = ["use-rayon"] }
 rayon = "1.10.0"
-itertools = "0.13.0"
 nalgebra = "0.33.2"
 
 [dev-dependencies]
