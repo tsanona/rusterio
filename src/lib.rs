@@ -77,22 +77,25 @@ impl Raster {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Raster> {
         let dataset = Dataset::open(&path)?;
         let (metadata, subdatasets) = Self::parse_dataset(&dataset)?;
-        let crs = dataset.spatial_ref()?.to_proj4()?;
-        let bands_info = subdatasets
-            .into_iter()
+        //let crs = dataset.spatial_ref()?.to_proj4()?;
+        let crs_bands_info = subdatasets
+            .into_par_iter()
             // Don't use tci bands
             .filter(|dataset| !dataset.description().unwrap().contains("TCI"))
             .map(Self::parse_subdataset)
-            .filter_map(Result::ok)
-            .flatten()
-            .collect();
-        dataset.close()?;
-        Ok(Raster {
-            path: path.as_ref().to_path_buf(),
-            metadata,
-            crs,
-            bands_info,
-        })
+            .collect::<Result<HashMap<String, HashMap<String, BandInfo>>>>()?;
+        match crs_bands_info.keys().len() {
+            1 => {
+                let (crs, bands_info) = crs_bands_info.into_iter().next().unwrap();
+                Ok(Raster {
+                    path: path.as_ref().to_path_buf(),
+                    metadata,
+                    crs,
+                    bands_info,
+                })
+            }
+            _ => todo!(),
+        }
     }
 
     fn band_info(&self, band: &str) -> Result<&BandInfo> {
@@ -169,7 +172,7 @@ impl Raster {
         Ok((raster_metadata, raster_subdataset_paths))
     }
 
-    fn parse_subdataset(dataset: Dataset) -> Result<HashMap<String, BandInfo>> {
+    fn parse_subdataset(dataset: Dataset) -> Result<(String, HashMap<String, BandInfo>)> {
         let mut bands_info = HashMap::new();
         for (idx, raster_band) in dataset.rasterbands().enumerate() {
             let mut metadata = BandMetadata::new();
@@ -181,7 +184,6 @@ impl Raster {
                     _ => continue,
                 }
             }
-            //let projection = Proj::new(dataset.spatial_ref()?.to_proj4()?.as_str())?;
             let geo_transform = transform_from_gdal(&dataset.geo_transform()?);
             let dataset_path = dataset.description()?;
             let chunk_config = ChunkConfig::for_dataset(&dataset, Some(idx + 1..idx + 2))
@@ -203,8 +205,9 @@ impl Raster {
                 },
             );
         }
+        let crs = dataset.spatial_ref()?.to_wkt()?;
         dataset.close()?;
-        Ok(bands_info)
+        Ok((crs, bands_info))
     }
 }
 
@@ -234,6 +237,11 @@ mod tests {
 
     #[rstest]
     fn play_ground(test_raster: Raster) {
+        print!("{:?}", test_raster.crs);
+    }
+
+    #[rstest]
+    fn to_npy(test_raster: Raster) {
         let rgb = ((test_raster
             .read_bands(vec!["B4", "B3", "B2"], (0, 0), (100, 100))
             .unwrap()
