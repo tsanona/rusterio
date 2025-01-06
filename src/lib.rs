@@ -41,7 +41,7 @@ type BandsInfo = HashMap<BandName, BandInfo>;
 #[derive(Debug)]
 pub struct Raster {
     path: PathBuf,
-    metadata: RasterMetadata,
+    pub metadata: RasterMetadata,
     bands_info: BandsInfo,
 }
 
