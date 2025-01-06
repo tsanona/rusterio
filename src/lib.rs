@@ -42,6 +42,7 @@ type BandsInfo = HashMap<BandName, BandInfo>;
 pub struct Raster {
     path: PathBuf,
     pub metadata: RasterMetadata,
+    pub crs: String,
     bands_info: BandsInfo,
 }
 
@@ -76,6 +77,7 @@ impl Raster {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Raster> {
         let dataset = Dataset::open(&path)?;
         let (metadata, subdatasets) = Self::parse_dataset(&dataset)?;
+        let crs = dataset.spatial_ref()?.to_proj4()?;
         let bands_info = subdatasets
             .into_iter()
             // Don't use tci bands
@@ -88,6 +90,7 @@ impl Raster {
         Ok(Raster {
             path: path.as_ref().to_path_buf(),
             metadata,
+            crs,
             bands_info,
         })
     }
