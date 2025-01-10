@@ -6,12 +6,12 @@ use ndarray::{Array2, Array3, ShapeError};
 use proj::ProjCreateError;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 
 use rasters::prelude::{
-    transform_from_gdal, transform_window, ChunkConfig, ChunkReader, DatasetReader, PixelTransform,
+    transform_from_gdal, transform_window, ChunkReader, DatasetReader, PixelTransform,
 };
 
 pub type Result<T> = std::result::Result<T, RasterError>;
@@ -32,6 +32,8 @@ pub enum RasterError {
     BandTransformNotInvertible(String),
     #[error("Couldn't find metadata key {key} in dataset {dataset_path}.")]
     MetadataKeyNotFound { dataset_path: String, key: String },
+    #[error("Dataset {0} contains bands with different projections.")]
+    MultipleProjectionsInDataset(String)
 }
 
 type RasterMetadata = HashMap<String, String>;
@@ -41,15 +43,10 @@ type BandsInfo = HashMap<BandName, BandInfo>;
 #[derive(Debug)]
 pub struct Raster {
     path: PathBuf,
-    pub metadata: RasterMetadata,
-    pub crs: String,
     bands_info: BandsInfo,
-}
-
-impl Raster {
-    fn dataset(&self) -> Result<Dataset> {
-        Dataset::open(&self.path).map_err(RasterError::GdalError)
-    }
+    pub metadata: RasterMetadata,
+    pub proj: String,
+    highest_resolution_transform: PixelTransform
 }
 
 type BandMetadata = HashMap<String, String>;
@@ -58,8 +55,8 @@ type BandMetadata = HashMap<String, String>;
 struct BandInfo {
     index: usize,
     path: PathBuf,
-    chunk_config: ChunkConfig,
     metadata: BandMetadata,
+    proj: String,
     geo_transform: PixelTransform,
 }
 
@@ -67,34 +64,95 @@ impl BandInfo {
     fn dataset(&self) -> Result<Dataset> {
         Dataset::open(&self.path).map_err(RasterError::GdalError)
     }
+
+    fn reader(&self) -> Result<DatasetReader> {
+        Ok(DatasetReader(self.dataset()?, self.index))
+    }
 }
 
 type RasterSubDatasets = Vec<Dataset>;
 
 impl Raster {
+    fn parse_dataset(dataset: &Dataset) -> Result<(RasterMetadata, RasterSubDatasets)> {
+        let mut raster_metadata = RasterMetadata::new();
+        let mut raster_subdataset_paths = RasterSubDatasets::new();
+        for MetadataEntry { domain, key, value } in dataset.metadata() {
+            match domain.as_str() {
+                "" => {
+                    raster_metadata.insert(key, value);
+                }
+                "SUBDATASETS" if key.contains("NAME") => {
+                    raster_subdataset_paths.push(Dataset::open(value)?)
+                }
+                _ => continue,
+            }
+        }
+        Ok((raster_metadata, raster_subdataset_paths))
+    }
+
     const BANDNAME_KEY: &'static str = "BANDNAME";
+
+    fn parse_subdataset(dataset: Dataset) -> Result<Vec<(String, BandInfo)>> {
+        let mut bands_info = Vec::new();
+        let dataset_path = dataset.description()?;
+        let geo_transform = transform_from_gdal(&dataset.geo_transform()?);
+        let proj = dataset.projection();
+        for (idx, raster_band) in dataset.rasterbands().enumerate() {
+            let mut metadata = BandMetadata::new();
+            for MetadataEntry { domain, key, value } in raster_band?.metadata() {
+                match domain.as_str() {
+                    "" => {
+                        metadata.insert(key, value);
+                    }
+                    _ => continue,
+                }
+            }
+            bands_info.push((
+                metadata
+                    .get(Self::BANDNAME_KEY)
+                    .ok_or(RasterError::MetadataKeyNotFound {
+                        key: String::from(Self::BANDNAME_KEY),
+                        dataset_path: dataset_path.clone(),
+                    })?
+                    .to_string(),
+                BandInfo {
+                    index: idx + 1,
+                    path: dataset_path.clone().into(),
+                    metadata,
+                    proj: proj.clone(),
+                    geo_transform,
+                }
+            ));
+        }
+        dataset.close()?;
+        Ok(bands_info)
+    }
 
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Raster> {
         let dataset = Dataset::open(&path)?;
         let (metadata, subdatasets) = Self::parse_dataset(&dataset)?;
-        //let crs = dataset.spatial_ref()?.to_proj4()?;
-        let crs_bands_info = subdatasets
+        let bands_info = HashMap::from_iter(subdatasets
             .into_par_iter()
             // Don't use tci bands
             .filter(|dataset| !dataset.description().unwrap().contains("TCI"))
             .map(Self::parse_subdataset)
-            .collect::<Result<HashMap<String, HashMap<String, BandInfo>>>>()?;
-        match crs_bands_info.keys().len() {
+            .collect::<Result<Vec<Vec<(String, BandInfo)>>>>()?.into_iter().flatten());
+        let mut projs = bands_info.values().map(|band_info| band_info.proj.clone()).collect::<HashSet<String>>();
+        match projs.len() {
             1 => {
-                let (crs, bands_info) = crs_bands_info.into_iter().next().unwrap();
+                let highest_resolution_transform = bands_info
+                .values()
+                .map(|band_info| band_info.geo_transform)
+                .reduce(|prev, next| if prev.m11 < next.m11 { prev } else { next })
+                .unwrap();
                 Ok(Raster {
-                    path: path.as_ref().to_path_buf(),
-                    metadata,
-                    crs,
-                    bands_info,
-                })
-            }
-            _ => todo!(),
+                path: path.as_ref().to_path_buf(),
+                bands_info,
+                metadata,
+                proj: projs.drain().last().unwrap(),
+                highest_resolution_transform
+            })},
+            _ => Err(RasterError::MultipleProjectionsInDataset(dataset.description()?))
         }
     }
 
@@ -119,12 +177,6 @@ impl Raster {
     ) -> Result<Array3<u16>> {
         let bands_info = self.bands_info(&bands)?;
 
-        let highest_resolution_transform = bands_info
-            .iter()
-            .map(|(_, band_info)| band_info.geo_transform)
-            .reduce(|prev, next| if prev.m11 < next.m11 { prev } else { next })
-            .unwrap();
-
         let band_rasters = bands_info
             .into_par_iter()
             .map(|(band, band_info)| {
@@ -132,13 +184,13 @@ impl Raster {
                     .geo_transform
                     .try_inverse()
                     .ok_or(RasterError::BandTransformNotInvertible((*band).into()))?
-                    * highest_resolution_transform;
+                    * self.highest_resolution_transform;
                 let (corrected_offset, corrected_window) = transform_window(
                     (offset, window),
                     transform,
                     band_info.dataset()?.raster_size(),
                 );
-                DatasetReader(band_info.dataset()?, band_info.index)
+                band_info.reader()?
                     .read_as_array::<u16>(corrected_offset, corrected_window)
                     .map(|band_raster| (band_raster, transform))
                     .map_err(RasterError::RastersError)
@@ -153,61 +205,6 @@ impl Raster {
                 band_raster[[corrected_coords.x as usize, corrected_coords.y as usize]]
             },
         ))
-    }
-
-    fn parse_dataset(dataset: &Dataset) -> Result<(RasterMetadata, RasterSubDatasets)> {
-        let mut raster_metadata = RasterMetadata::new();
-        let mut raster_subdataset_paths = RasterSubDatasets::new();
-        for MetadataEntry { domain, key, value } in dataset.metadata() {
-            match domain.as_str() {
-                "" => {
-                    raster_metadata.insert(key, value);
-                }
-                "SUBDATASETS" if key.contains("NAME") => {
-                    raster_subdataset_paths.push(Dataset::open(value)?)
-                }
-                _ => continue,
-            }
-        }
-        Ok((raster_metadata, raster_subdataset_paths))
-    }
-
-    fn parse_subdataset(dataset: Dataset) -> Result<(String, HashMap<String, BandInfo>)> {
-        let mut bands_info = HashMap::new();
-        for (idx, raster_band) in dataset.rasterbands().enumerate() {
-            let mut metadata = BandMetadata::new();
-            for MetadataEntry { domain, key, value } in raster_band?.metadata() {
-                match domain.as_str() {
-                    "" => {
-                        metadata.insert(key, value);
-                    }
-                    _ => continue,
-                }
-            }
-            let geo_transform = transform_from_gdal(&dataset.geo_transform()?);
-            let dataset_path = dataset.description()?;
-            let chunk_config = ChunkConfig::for_dataset(&dataset, Some(idx + 1..idx + 2))
-                .map_err(RasterError::RastersError)?;
-            bands_info.insert(
-                metadata
-                    .get(Self::BANDNAME_KEY)
-                    .ok_or(RasterError::MetadataKeyNotFound {
-                        key: String::from(Self::BANDNAME_KEY),
-                        dataset_path,
-                    })?
-                    .to_string(),
-                BandInfo {
-                    index: idx + 1,
-                    path: dataset.description()?.into(),
-                    chunk_config,
-                    metadata,
-                    geo_transform,
-                },
-            );
-        }
-        let crs = dataset.spatial_ref()?.to_wkt()?;
-        dataset.close()?;
-        Ok((crs, bands_info))
     }
 }
 
@@ -237,7 +234,7 @@ mod tests {
 
     #[rstest]
     fn play_ground(test_raster: Raster) {
-        print!("{:?}", test_raster.crs);
+        print!("{:#?}", test_raster);
     }
 
     #[rstest]
@@ -250,7 +247,7 @@ mod tests {
             * 255)
             / 100;
 
-        write_npy("dev/test.npy", &rgb);
+        write_npy("dev/test.npy", &rgb).unwrap();
         //println!("{:?}", rgb);
     }
 }
