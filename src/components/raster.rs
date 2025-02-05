@@ -1,13 +1,13 @@
-use crate::sensors::Sensor;
 use super::{
     band::{BandInfo, Bands},
     Result,
 };
+use crate::sensors::Sensor;
 
 #[derive(Debug)]
 pub struct Raster<S: Sensor> {
     bands: Bands<S::BandMetadata>,
-    metadata: S::RasterMetadata
+    pub metadata: S::RasterMetadata,
 }
 
 impl<S: Sensor> Raster<S> {
@@ -15,7 +15,7 @@ impl<S: Sensor> Raster<S> {
         Self { bands, metadata }
     }
 
-    fn get_band_info(&self, band_name: &String) -> Result<&BandInfo<S::BandMetadata>> {
+    pub fn get_band_info(&self, band_name: &'static str) -> Result<&BandInfo<S::BandMetadata>> {
         self.bands.get(band_name)
     }
 

@@ -6,7 +6,7 @@ use std::{
     rc::Rc,
 };
 
-use super::{Sentinel2ArrayError, Result};
+use super::{Result, Sentinel2ArrayError};
 
 #[derive(Debug)]
 pub struct BandGroup {
@@ -59,13 +59,18 @@ impl<BM> BandInfo<BM> {
 }
 
 #[derive(Debug, Default)]
-pub struct Bands<BM>(HashMap<String, BandInfo<BM>>) where BM: Default;
+pub struct Bands<BM>(HashMap<String, BandInfo<BM>>)
+where
+    BM: Default;
 
-impl<BM> Bands<BM> where BM: Default {
-    pub fn get(&self, band_name: &String) -> Result<&BandInfo<BM>> {
+impl<BM> Bands<BM>
+where
+    BM: Default,
+{
+    pub fn get(&self, band_name: &'static str) -> Result<&BandInfo<BM>> {
         self.0
             .get(band_name)
-            .ok_or(Sentinel2ArrayError::BandNotFound(band_name.clone()))
+            .ok_or(Sentinel2ArrayError::BandNotFound(band_name.into()))
     }
     pub fn names(&self) -> Vec<&String> {
         let mut names = self.0.keys().collect::<Vec<&String>>();
@@ -82,7 +87,10 @@ impl<BM> Bands<BM> where BM: Default {
     }
 }
 
-impl<BM> FromIterator<(String, BandInfo<BM>)> for Bands<BM> where BM: Default {
+impl<BM> FromIterator<(String, BandInfo<BM>)> for Bands<BM>
+where
+    BM: Default,
+{
     fn from_iter<T: IntoIterator<Item = (String, BandInfo<BM>)>>(iter: T) -> Self {
         iter.into_iter()
             .fold(Bands::default(), |bands, (band_name, band_info)| {

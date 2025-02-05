@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use super::{Result, Sentinel2ArrayError};
+use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct Metadata {

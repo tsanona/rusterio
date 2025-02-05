@@ -20,4 +20,6 @@ pub enum Sentinel2ArrayError {
     BandNotFound(String),
     #[error("Couldn't find {key} in metadata of {object_desc}.")]
     MetadataKeyNotFound { object_desc: String, key: String },
+    #[error("Trying to use parser for {parser} to read {dataset} data.")]
+    WrongParser { parser: String, dataset: String },
 }

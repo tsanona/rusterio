@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 
-pub mod sentinel2;
+mod sentinel2;
+pub use sentinel2::Sentinel2;
 
 pub trait Sensor: Debug {
     type RasterMetadata: Debug;

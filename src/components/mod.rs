@@ -1,6 +1,6 @@
 pub mod band;
 pub mod metadata;
-pub mod parser;
+pub mod reader;
 pub mod raster;
 
-pub use super::errors::{Sentinel2ArrayError, Result};
+pub use super::errors::{Result, Sentinel2ArrayError};

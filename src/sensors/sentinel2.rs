@@ -1,21 +1,21 @@
 use gdal::Metadata as GdalMetadata;
 use itertools::Itertools;
-use std::{path::Path, rc::Rc};
+use std::rc::Rc;
 
 use crate::{
     components::{
-        band::{BandGroup, BandInfo},
+        band::{BandGroup, BandInfo, Bands},
         metadata::Metadata,
-        parser::DatasetParser,
-        raster::Raster,
+        reader::DatasetReader,
     },
-    errors::{Sentinel2ArrayError, Result},
+    errors::{Result, Sentinel2ArrayError},
 };
 
 use super::Sensor;
 
 #[derive(Debug)]
 pub struct Sentinel2;
+
 impl Sensor for Sentinel2 {
     type RasterMetadata = RasterMetadata;
     type BandMetadata = BandMetadata;
@@ -23,46 +23,36 @@ impl Sensor for Sentinel2 {
     const GDAL_DRIVER_NAME: &'static str = "Sentinel2";
 }
 
-pub struct Parser;
-
-impl DatasetParser<Sentinel2> for Parser {
-    fn parse_dataset<P: AsRef<Path>>(path: P) -> Result<Raster<Sentinel2>> {
-        let dataset = gdal::Dataset::open(path)?;
+impl DatasetReader<Sentinel2> for Sentinel2 {
+    fn read_dataset(dataset: gdal::Dataset) -> Result<(Bands<BandMetadata>, RasterMetadata)> {
         let (metadata, bandgroup_datasets) = Self::parse_raster_metadata(&dataset)?;
         let bands = bandgroup_datasets
             .iter()
-            .map(Self::parse_bandgroup_dataset)
-            .process_results(|iter| iter.flatten().collect())?;
-        Ok(Raster::new(bands, metadata))
+            .map(Self::read_bandgroup_dataset)
+            .process_results(|iter| Bands::from_iter(iter.flatten()))?;
+        Ok((bands, metadata))
     }
 }
 
-impl Parser {
+impl Sentinel2 {
     fn parse_raster_metadata(
         raster_dataset: &gdal::Dataset,
     ) -> Result<(RasterMetadata, Vec<gdal::Dataset>)> {
-        raster_dataset
-            .description()
-            .map(|description| {
-                raster_dataset.metadata().fold(
-                    (RasterMetadata::new(description), Vec::new()),
-                    |mut folded, gdal::MetadataEntry { domain, key, value }| {
-                        match domain.as_str() {
-                            "" => folded.0.0.insert(key, value),
-                            // Subdataset paths are presumed to not fail
-                            "SUBDATASETS" if key.contains("NAME") => {
-                                folded.1.push(gdal::Dataset::open(value).unwrap())
-                            }
-                            _ => (),
-                        };
-                        folded
-                    },
-                )
-            })
-            .map_err(Sentinel2ArrayError::GdalError)
+        let mut raster_metadata = RasterMetadata::new(raster_dataset.description()?);
+        let mut subdatasets = Vec::new();
+        for gdal::MetadataEntry { domain, key, value } in raster_dataset.metadata() {
+            match domain.as_str() {
+                "" => raster_metadata.0.insert(key, value),
+                "SUBDATASETS" if key.contains("NAME") => {
+                    subdatasets.push(gdal::Dataset::open(value)?)
+                }
+                _ => (),
+            };
+        }
+        Ok((raster_metadata, subdatasets))
     }
 
-    fn parse_bandgroup_dataset<'a>(
+    fn read_bandgroup_dataset<'a>(
         bandgroup_dataset: &'a gdal::Dataset,
     ) -> Result<Vec<(String, BandInfo<BandMetadata>)>> {
         let band_group = Rc::new(BandGroup::new(&bandgroup_dataset)?);
@@ -70,12 +60,11 @@ impl Parser {
             .rasterbands()
             .enumerate()
             .map(|(index, raster_band)| {
-                Self::parse_rasterband_metadata(raster_band?).map(|(band_name, metadata)| {
-                    (
-                        band_name,
-                        BandInfo::new(Rc::clone(&band_group), index, metadata),
-                    )
-                })
+                let (band_name, metadata) = Self::parse_rasterband_metadata(raster_band?)?;
+                Ok((
+                    band_name,
+                    BandInfo::new(Rc::clone(&band_group), index, metadata),
+                ))
             })
             .collect()
     }
@@ -83,27 +72,19 @@ impl Parser {
     fn parse_rasterband_metadata(
         raster_band: gdal::raster::RasterBand,
     ) -> Result<(String, BandMetadata)> {
-        raster_band
-            .description()
-            .map(|description| {
-                raster_band
-                    .metadata()
-                    .filter_map(|gdal::MetadataEntry { domain, key, value }| {
-                        matches!(domain.as_str(), "").then(|| (key, value))
-                    })
-                    .fold(
-                        (String::new(), BandMetadata::new(description)),
-                        |mut acc, (key, value)| {
-                            if matches!(key.as_str(), "BANDNAME") {
-                                acc.0.push_str(&value);
-                            } else {
-                                acc.1.0.insert(key, value);
-                            }
-                            acc
-                        },
-                    )
-            })
-            .map_err(Sentinel2ArrayError::GdalError)
+        let mut band_name = String::new();
+        let mut  metadata = BandMetadata::new(raster_band.description()?);
+        for gdal::MetadataEntry { domain, key, value } in raster_band.metadata() {
+            if matches!(domain.as_str(), "") {
+                // Should only exist one.
+                if matches!(key.as_str(), "BANDNAME") {
+                    band_name.push_str(&value);
+                } else {
+                    metadata.0.insert(key, value);
+                }
+            }
+        }
+        Ok((band_name, metadata))
     }
 }
 
