@@ -2,6 +2,8 @@ mod components;
 mod errors;
 mod sensors;
 
+pub use sensors::Sentinel2;
+
 #[cfg(test)]
 mod tests {
     use super::*;
