@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 mod components;
 mod errors;
 mod sensors;
@@ -20,7 +19,7 @@ mod tests {
 
     #[rstest]
     fn play_ground(test_raster: Raster<Sentinel2>) {
-        println!("{:#?}", test_raster.get_band_info("B1"))
+        println!("{:#?}", test_raster.read_bands(vec!["B4", "B2", "B3"], (0, 0), (125, 125)).unwrap().dim())
     }
 
     /* #[rstest]
