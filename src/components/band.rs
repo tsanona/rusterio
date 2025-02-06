@@ -11,8 +11,9 @@ use super::{Result, Sentinel2ArrayError};
 #[derive(Debug)]
 pub struct BandGroup {
     gdal_dataset_path: PathBuf,
-    pub crs: String,
-    pub geo_transform: PixelTransform,
+    crs: String,
+    geo_transform: PixelTransform,
+    raster_size: (usize, usize)
 }
 
 impl BandGroup {
@@ -25,6 +26,7 @@ impl BandGroup {
                 gdal_dataset_path,
                 crs,
                 geo_transform: transform_from_gdal(&geo_transform),
+                raster_size: dataset.raster_size()
             })
             .map_err(Sentinel2ArrayError::GdalError)
     }
@@ -49,8 +51,17 @@ impl<BM> BandInfo<BM> {
             metadata,
         }
     }
+
+    pub fn geo_transform(&self) -> PixelTransform {
+        self.group.geo_transform
+    }
+
+    pub fn raster_size(&self) -> (usize, usize) {
+        self.group.raster_size
+    }
+
     pub fn resolution(&self) -> u8 {
-        self.group.geo_transform.m11 as u8
+        self.geo_transform().m11 as u8
     }
 
     pub fn reader(&self) -> RasterPathReader<PathBuf> {
@@ -59,19 +70,15 @@ impl<BM> BandInfo<BM> {
 }
 
 #[derive(Debug, Default)]
-pub struct Bands<BM>(HashMap<String, BandInfo<BM>>)
-where
-    BM: Default;
+pub struct Bands<BM>(HashMap<String, BandInfo<BM>>);
 
-impl<BM> Bands<BM>
-where
-    BM: Default,
-{
+impl<BM> Bands<BM> {
     pub fn get(&self, band_name: &'static str) -> Result<&BandInfo<BM>> {
         self.0
             .get(band_name)
             .ok_or(Sentinel2ArrayError::BandNotFound(band_name.into()))
     }
+    
     pub fn names(&self) -> Vec<&String> {
         let mut names = self.0.keys().collect::<Vec<&String>>();
         names.sort();
@@ -87,10 +94,7 @@ where
     }
 }
 
-impl<BM> FromIterator<(String, BandInfo<BM>)> for Bands<BM>
-where
-    BM: Default,
-{
+impl<BM: Default> FromIterator<(String, BandInfo<BM>)> for Bands<BM> {
     fn from_iter<T: IntoIterator<Item = (String, BandInfo<BM>)>>(iter: T) -> Self {
         iter.into_iter()
             .fold(Bands::default(), |bands, (band_name, band_info)| {

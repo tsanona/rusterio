@@ -1,6 +1,12 @@
+#![allow(dead_code)]
+
+use rasters::{prelude::{transform_window, PixelTransform}, reader::ChunkReader};
+use ndarray::{Array2, Array3};
+use nalgebra::Point2;
 use super::{
     band::{BandInfo, Bands},
     Result,
+    Sentinel2ArrayError
 };
 use crate::sensors::Sensor;
 
@@ -19,34 +25,30 @@ impl<S: Sensor> Raster<S> {
         self.bands.get(band_name)
     }
 
-    // todo get intermidiate representation with each array that can be latter conacated
-    /* pub fn read_bands(
+    pub fn read_bands(
         &self,
         bands: Vec<&'static str>,
         offset: (isize, isize),
         window: (usize, usize),
     ) -> Result<Array3<u16>> {
 
-        let bands_info= bands.into_iter().map(|band_name| self.get_band(&band_name.to_string()));
-
-        let band_rasters = bands_info
-            //.par_bridge()
+        let bands_info = bands.iter().map(|band_name| self.get_band_info(band_name)).collect::<Result<Vec<&BandInfo<S::BandMetadata>>>>()?;
+        let highest_resolution_transform = bands_info.iter().map(|band_info| band_info.geo_transform()).reduce(|prev, next| if next.m11 < prev.m11 {next} else {prev}).unwrap();
+        let band_rasters = bands_info.into_iter()
             .map(|band_info| {
-                let transform = band_info?
-                    .group
-                    .geo_transform
-                    .try_inverse()
-                    .ok_or(RasterError::BandTransformNotInvertible((*band).into()))?
-                    * self.highest_resolution_transform;
+                let transform = band_info
+                    .geo_transform()
+                    .try_inverse().unwrap()
+                    * highest_resolution_transform;
                 let (corrected_offset, corrected_window) = transform_window(
                     (offset, window),
                     transform,
-                    band_info.dataset()?.raster_size(),
+                    band_info.raster_size(),
                 );
-                band_info?.reader()
+                band_info.reader()
                     .read_as_array::<u16>(corrected_offset, corrected_window)
                     .map(|band_raster| (band_raster, transform))
-                    .map_err(RasterError::RastersError)
+                    .map_err(Sentinel2ArrayError::RastersError)
             })
             .collect::<Result<Vec<(Array2<u16>, PixelTransform)>>>()?;
 
@@ -58,5 +60,5 @@ impl<S: Sensor> Raster<S> {
                 band_raster[[corrected_coords.x as usize, corrected_coords.y as usize]]
             },
         ))
-    } */
+    }
 }

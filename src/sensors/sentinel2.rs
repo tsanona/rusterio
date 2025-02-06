@@ -63,7 +63,7 @@ impl Sentinel2 {
                 let (band_name, metadata) = Self::parse_rasterband_metadata(raster_band?)?;
                 Ok((
                     band_name,
-                    BandInfo::new(Rc::clone(&band_group), index, metadata),
+                    BandInfo::new(Rc::clone(&band_group), index + 1, metadata),
                 ))
             })
             .collect()
