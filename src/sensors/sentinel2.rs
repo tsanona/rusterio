@@ -1,6 +1,6 @@
 use gdal::Metadata as GdalMetadata;
 use itertools::Itertools;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::{
     components::{
@@ -23,7 +23,7 @@ impl Sensor for Sentinel2 {
     const GDAL_DRIVER_NAME: &'static str = "Sentinel2";
 }
 
-impl DatasetReader<Sentinel2> for Sentinel2 {
+impl DatasetReader for Sentinel2 {
     fn read_dataset(dataset: gdal::Dataset) -> Result<(Bands<BandMetadata>, RasterMetadata)> {
         let (metadata, bandgroup_datasets) = Self::parse_raster_metadata(&dataset)?;
         let bands = bandgroup_datasets
@@ -55,7 +55,7 @@ impl Sentinel2 {
     fn read_bandgroup_dataset<'a>(
         bandgroup_dataset: &'a gdal::Dataset,
     ) -> Result<Vec<(String, BandInfo<BandMetadata>)>> {
-        let band_group = Rc::new(BandGroup::new(&bandgroup_dataset)?);
+        let band_group = Arc::new(BandGroup::new(&bandgroup_dataset)?);
         bandgroup_dataset
             .rasterbands()
             .enumerate()
@@ -63,7 +63,7 @@ impl Sentinel2 {
                 let (band_name, metadata) = Self::parse_rasterband_metadata(raster_band?)?;
                 Ok((
                     band_name,
-                    BandInfo::new(Rc::clone(&band_group), index + 1, metadata),
+                    BandInfo::new(Arc::clone(&band_group), index + 1, metadata),
                 ))
             })
             .collect()

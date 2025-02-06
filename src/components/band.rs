@@ -3,7 +3,7 @@ use rasters::prelude::{transform_from_gdal, PixelTransform, RasterPathReader};
 use std::{
     collections::{hash_map::Entry, HashMap},
     path::PathBuf,
-    rc::Rc,
+    sync::Arc,
 };
 
 use super::{Result, Sentinel2ArrayError};
@@ -39,12 +39,12 @@ impl BandGroup {
 #[derive(Debug)]
 pub struct BandInfo<BM> {
     index: usize,
-    group: Rc<BandGroup>,
+    group: Arc<BandGroup>,
     metadata: BM,
 }
 
 impl<BM> BandInfo<BM> {
-    pub fn new(group: Rc<BandGroup>, index: usize, metadata: BM) -> Self {
+    pub fn new(group: Arc<BandGroup>, index: usize, metadata: BM) -> Self {
         Self {
             index,
             group,

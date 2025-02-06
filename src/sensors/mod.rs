@@ -6,8 +6,8 @@ mod sentinel2;
 pub use sentinel2::Sentinel2;
 
 pub trait Sensor {
-    type RasterMetadata: Debug;
-    type BandMetadata: Debug + Default;
+    type RasterMetadata: Debug + Send + Sync;
+    type BandMetadata: Debug + Default + Send + Sync;
 
     const GDAL_DRIVER_NAME: &'static str;
 }

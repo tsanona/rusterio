@@ -3,8 +3,8 @@ use crate::sensors::Sensor;
 use gdal;
 use std::path::Path;
 
-pub trait DatasetReader<S: Sensor> {
-    fn raster_from<P: AsRef<Path>>(path: P) -> Result<Raster<S>> {
+pub trait DatasetReader: Sensor + Sized {
+    fn raster_from<P: AsRef<Path>>(path: P) -> Result<Raster<Self>> {
         let dataset = Self::open_dataset(path)?;
         Self::read_dataset(dataset)
             .map(|(bands, raster_metadata)| Raster::new(bands, raster_metadata))
@@ -13,16 +13,16 @@ pub trait DatasetReader<S: Sensor> {
     fn open_dataset<P: AsRef<Path>>(path: P) -> Result<gdal::Dataset> {
         let dataset = gdal::Dataset::open(path)?;
         let dataset_driver = dataset.driver().short_name();
-        if dataset_driver.eq_ignore_ascii_case(S::GDAL_DRIVER_NAME) {
+        if dataset_driver.eq_ignore_ascii_case(Self::GDAL_DRIVER_NAME) {
             Ok(dataset)
         } else {
             Err(Sentinel2ArrayError::WrongParser {
-                parser: S::GDAL_DRIVER_NAME.into(),
+                parser: Self::GDAL_DRIVER_NAME.into(),
                 dataset: dataset_driver,
             })
         }
     }
 
     fn read_dataset(dataset: gdal::Dataset)
-        -> Result<(Bands<S::BandMetadata>, S::RasterMetadata)>;
+        -> Result<(Bands<Self::BandMetadata>, Self::RasterMetadata)>;
 }
