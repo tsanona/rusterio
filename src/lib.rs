@@ -2,6 +2,7 @@ mod components;
 mod errors;
 mod sensors;
 
+pub use components::reader::DatasetReader;
 pub use sensors::Sentinel2;
 
 #[cfg(test)]
