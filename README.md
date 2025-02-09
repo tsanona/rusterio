@@ -1,6 +1,9 @@
-# WIP
-Libibrary for reading Sentinel product SAFEs and loading them into ndarrays.
+# Rusterio
 
-### Supports:
-- [ ] Sentinel-1
-- [ ] Sentinel-2
+Read geo spatial data into ndarrays. A rust [rasterio](https://github.com/rasterio/rasterio) alike.
+
+## WIP
+
+### Currently Supports
+
+- [ ] Sentinel-2 from SAFE.zip

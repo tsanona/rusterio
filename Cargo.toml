@@ -1,23 +1,33 @@
 [package]
-name = "sentinel2array"
+name = "rusterio"
 version = "0.1.0"
+authors = ["Tiago Sanona"]
 edition = "2021"
+description = "Open raster datasets into ndarray."
+
+repository = "https://github.com/tsanona/rusterio"
+readme = "README.md"
+license-file = "LICENSE"
 
 [dependencies]
-gdal = "0.17.1" 
-ndarray = { version = "0.16.1", features = ["rayon"] }
-proj = { version = "0.28.0", features = ["geo-types"] }
-thiserror = "2.0.9"
+gdal = "0.17.1"
+# for gdal compatibility
 rasters = { git="https://github.com/tsanona/rasters.rs.git", features = ["use-rayon"] }
-rayon = "1.10.0"
+geo = { version="0.29.3", features = ["use-proj"]}
+geo-traits = "0.2.0"
+
+ndarray = { version = "0.16.1", features = ["rayon"] }
 nalgebra = "0.33.2"
-geo = "0.29.3"
+
+rayon = "1.10.0"
 itertools = "0.14.0"
+
+thiserror = "2.0.11"
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async", "async_tokio"] }
 ndarray-npy = "0.9.1"
-rstest = "0.23.0"
+rstest = "0.24.0"
 
 [[bench]]
 name = "benchmarks"
