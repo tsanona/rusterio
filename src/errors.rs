@@ -1,25 +1,13 @@
-use gdal::errors::GdalError;
-
-pub type Result<T> = std::result::Result<T, Sentinel2ArrayError>;
+pub type Result<T> = std::result::Result<T, RusterioError>;
 
 #[derive(thiserror::Error, Debug)]
-pub enum Sentinel2ArrayError {
+pub enum RusterioError {
     #[error(transparent)]
-    GdalError(#[from] GdalError),
+    ProjError(#[from] geo::proj::ProjError),
     #[error(transparent)]
-    RastersError(#[from] rasters::Error),
-    /*#[error(transparent)]
-    ProjError(#[from] ProjCreateError),
+    ProjCreateError(#[from] geo::proj::ProjCreateError),
     #[error(transparent)]
-    ShapeError(#[from] ShapeError),
-    #[error("Dataset {0} contains bands with different projections.")]
-    MultipleProjectionsInDataset(String), */
-    #[error("Band `{0}` has a non inverteble geo transform.")]
-    BandTransformNotInvertible(String),
-    #[error("Band `{0}` not found.")]
-    BandNotFound(String),
-    #[error("Couldn't find {key} in metadata of {object_desc}.")]
-    MetadataKeyNotFound { object_desc: String, key: String },
-    #[error("Trying to use parser for {parser} to read {dataset} data.")]
-    WrongParser { parser: String, dataset: String },
+    GdalError(#[from] gdal::errors::GdalError),
+    #[error(transparent)]
+    NdarrayError(#[from] ndarray::ShapeError),
 }
