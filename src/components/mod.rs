@@ -1,13 +1,14 @@
 #![allow(dead_code)]
-mod files;
+
+pub mod files;
 mod readers;
 
-pub use files::{File, gdal_backend::GdalFile};
+use files::File;
 
 use geo::{AffineOps, AffineTransform, Coord, Rect};
-use std::{any::Any, collections::HashMap, fmt::Debug, path::Path};
+use std::{collections::HashMap, fmt::Debug};
 
-use crate::{errors::Result, tuple_to, CrsGeometry, components::readers::Reader};
+use crate::{errors::Result, tuple_to, CrsGeometry};
 
 type Metadata = HashMap<String, String>;
 
@@ -41,7 +42,7 @@ pub struct Raster<F: File> {
 }
 
 impl<F: File> Raster<F> {
-    pub fn new(file:  F) -> Result<Self> {
+    pub fn new(file: F) -> Result<Self> {
         //let file = F::open(path)?;
 
         let transform = file.transform()?;

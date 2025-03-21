@@ -18,13 +18,16 @@ pub trait File: Debug + Sized {
 }
 
 pub mod gdal_backend {
-    use std::path::PathBuf;
-
     use super::*;
     use gdal::{
-        errors::Result as GdalResult, Dataset as GdalDataset, Metadata as GdalMetadata,
-        MetadataEntry as GdalMetadataEntry,
+        errors::Result as GdalResult, raster::GdalType, Dataset as GdalDataset,
+        Metadata as GdalMetadata, MetadataEntry as GdalMetadataEntry,
     };
+    use ndarray::{s, Array2, Array3};
+    use num::Num;
+    use std::path::PathBuf;
+
+    use crate::tuple_to;
 
     fn affine_from_gdal(gdal_transform: [f64; 6]) -> AffineTransform {
         AffineTransform::new(
@@ -89,6 +92,34 @@ pub mod gdal_backend {
         }
         fn reader(&self) -> Result<impl Reader> {
             Ok(GdalDataset::open(&self.path)?)
+        }
+    }
+
+    impl Reader for gdal::Dataset {
+        fn read_window<T: GdalType + Num + Clone + Copy>(
+            &self,
+            band_indexes: &[usize],
+            offset: (usize, usize),
+            size: (usize, usize),
+        ) -> Result<Array3<T>> {
+            let shape = (band_indexes.len(), size.0, size.1);
+            let mut array = Array3::zeros(shape);
+            for band_index in band_indexes {
+                let buf = self.rasterband(*band_index)?.read_as::<T>(
+                    tuple_to(offset),
+                    size,
+                    size,
+                    None,
+                )?;
+                let buf_shape = buf.shape();
+                array
+                    .slice_mut(s![*band_index, .., ..])
+                    .assign(&Array2::from_shape_vec(
+                        (buf_shape.1, buf_shape.0),
+                        buf.data().to_vec(),
+                    )?)
+            }
+            Ok(array)
         }
     }
 }
