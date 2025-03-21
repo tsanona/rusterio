@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-mod backends;
 mod components;
 mod errors;
 
@@ -41,13 +40,14 @@ fn tuple_to<TO: Copy + 'static, TI: AsPrimitive<TO>>(tuple: (TI, TI)) -> (TO, TO
 #[cfg(test)]
 mod tests {
     use super::*;
-    use components::Raster;
+    use components::{GdalFile, Raster, File};
     use rstest::rstest;
 
     #[rstest]
     fn play_ground() {
         let raster_path = "SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:10:EPSG_32633";
-        let raster = Raster::new(raster_path).unwrap();
+        let file = GdalFile::open(raster_path).unwrap();
+        let raster = Raster::new(file).unwrap();
         println!("{:#?}", raster.bands());
         //println!("{:#?}", raster.read_pixel_window(&[0, 1, 2, 3], (0, 0), (125, 125)).unwrap().shape())
         //assert_eq!(raster.size(), tuple_to(dataset.raster_size()))

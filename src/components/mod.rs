@@ -1,15 +1,13 @@
 #![allow(dead_code)]
-
-mod datasets;
+mod files;
 mod readers;
 
-pub use datasets::Dataset;
-pub use readers::Reader;
+pub use files::{File, gdal_backend::GdalFile};
 
 use geo::{AffineOps, AffineTransform, Coord, Rect};
-use std::{collections::HashMap, path::Path};
+use std::{any::Any, collections::HashMap, fmt::Debug, path::Path};
 
-use crate::{backends, errors::Result, tuple_to, CrsGeometry};
+use crate::{errors::Result, tuple_to, CrsGeometry, components::readers::Reader};
 
 type Metadata = HashMap<String, String>;
 
@@ -29,7 +27,7 @@ impl Band {
 }
 
 #[derive(Debug)]
-pub struct Raster {
+pub struct Raster<F: File> {
     description: String,
     /// Bounds in raster crs such that,
     /// when projected to pixel coordinates,
@@ -39,29 +37,36 @@ pub struct Raster {
     transform: AffineTransform,
     bands: Vec<Band>,
     metadata: Metadata,
+    file: F,
 }
 
-impl Raster {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let dataset = backends::open_dataset(path)?;
+impl<F: File> Raster<F> {
+    pub fn new(file:  F) -> Result<Self> {
+        //let file = F::open(path)?;
 
-        let transform = dataset.transform()?;
+        let transform = file.transform()?;
         // reflect transform about x/y axis so bounds.max() == size()
         let transform = transform.scaled(
             transform.a().signum(),
             transform.e().signum(),
             Coord::zero(),
         );
-        let size = dataset.size();
-        let geometry = Rect::new((0., 0.), tuple_to(size)).affine_transform(&transform);
-        let crs = dataset.crs();
+
+        let geometry = Rect::new((0., 0.), tuple_to(file.size())).affine_transform(&transform);
+        let crs = file.crs();
         let bounds = CrsGeometry { crs, geometry };
+
+        let description = file.description()?;
+        let metadata = file.metadata();
+        let bands = file.bands()?;
+
         Ok(Self {
-            description: dataset.description()?,
-            metadata: dataset.metadata(),
+            description,
+            metadata,
             bounds,
             transform: transform.inverse().unwrap(),
-            bands: dataset.bands()?,
+            bands,
+            file,
         })
     }
 
@@ -92,8 +97,4 @@ impl Raster {
     pub fn num_bands(&self) -> usize {
         self.bands.len()
     }
-}
-
-struct RasterStack {
-    rasters: Vec<Raster>
 }
