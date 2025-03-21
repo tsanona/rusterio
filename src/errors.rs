@@ -10,4 +10,6 @@ pub enum RusterioError {
     GdalError(#[from] gdal::errors::GdalError),
     #[error(transparent)]
     NdarrayError(#[from] ndarray::ShapeError),
+    #[error("Ther is no intersection between geometries")]
+    NoIntersection
 }

@@ -1,14 +1,19 @@
 #![allow(dead_code)]
+extern crate geo_booleanop;
+use geo::{coord, Coord, BooleanOps, HasDimensions, Translate};
 
 pub mod files;
 mod readers;
 
 use files::File;
 
-use geo::{AffineOps, AffineTransform, Coord, Rect};
+
+
+use geo::{AffineOps, AffineTransform, BoundingRect, Polygon, Rect};
+use readers::Reader;
 use std::{collections::HashMap, fmt::Debug};
 
-use crate::{errors::Result, tuple_to, CrsGeometry};
+use crate::{errors::{Result, RusterioError}, tuple_to, CrsGeometry};
 
 type Metadata = HashMap<String, String>;
 
@@ -94,8 +99,53 @@ impl<F: File> Raster<F> {
         &self.bands
     }
 
-    /// Return total number of bands.
-    pub fn num_bands(&self) -> usize {
-        self.bands.len()
+    pub fn clip<'a, T: GdalType + Num + Clone + Copy>(&self, band_indexes: &'a [usize], geometry: CrsGeometry<Polygon>) -> Result<Array3<T>> {
+        self.geometry_view(band_indexes, geometry)?.read()
+    }
+
+    fn pixel_view<'a>(&self, band_indexes: &'a [usize], offset: (u32, u32), size: (u32, u32)) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
+        let (x_offset, y_offset) = tuple_to(offset);
+        let pixel_bounds = Rect::new((0., 0.), tuple_to(size)).translate(x_offset, y_offset);
+        let raster_intersect = pixel_bounds.to_polygon().intersection(&self.bounds.geometry.to_polygon().affine_transform(self.transform()));
+        if !raster_intersect.is_empty() {
+            let bounds = raster_intersect.affine_transform(self.transform()).bounding_rect().unwrap();
+            return Ok(RasterView { band_indexes, bounds, reader: self.file.reader() })
+        }
+        Err(RusterioError::NoIntersection)
+
+        
+    }
+
+    fn geometry_view<'a>(&self, band_indexes: &'a [usize], geometry: CrsGeometry<Polygon>) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
+        let raster_intersect = geometry.projected_geometry(&self.bounds.crs)?.intersection(&self.bounds.geometry.to_polygon());
+        if !raster_intersect.is_empty() {
+            let bounds = raster_intersect.affine_transform(self.transform()).bounding_rect().unwrap();
+            return Ok(RasterView { band_indexes, bounds, reader: self.file.reader() })
+        }
+        Err(RusterioError::NoIntersection)
+    }
+}
+
+struct RasterView<'a, R: Reader> {
+    band_indexes: &'a [usize],
+    bounds: Rect,
+    reader: R
+}
+
+use gdal::raster::GdalType;
+use num::Num;
+use ndarray::Array3;
+
+impl<'a, R: Reader> RasterView<'a, R> {
+    pub fn read<T: GdalType + Num + Clone + Copy>(self) -> Result<Array3<T>>{
+        self.reader.read_window::<T>(self.band_indexes, tuple_to(self.offset()), tuple_to(self.size()))
+    }
+
+    fn offset(&self) -> (f64, f64) {
+        (self.bounds.max() - coord!{ x: self.bounds.width(), y: 0.}).x_y()
+    }
+
+    fn size(&self) -> (f64, f64) {
+        (self.bounds.width(), self.bounds.height())
     }
 }

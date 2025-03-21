@@ -25,8 +25,8 @@ impl<G: GeometryTrait + Transform<G::T, Output = G>> CrsGeometry<G> {
         Ok(self)
     }
 
-    fn projected_geometry(&self, crs: String) -> Result<G> {
-        let proj = Proj::new_known_crs(self.crs.as_str(), crs.as_str(), None)?;
+    fn projected_geometry(&self, crs: &str) -> Result<G> {
+        let proj = Proj::new_known_crs(self.crs.as_str(), crs, None)?;
         self.geometry
             .transformed(&proj)
             .map_err(RusterioError::ProjError)

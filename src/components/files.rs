@@ -14,7 +14,7 @@ pub trait File: Debug + Sized {
     fn transform(&self) -> Result<AffineTransform>;
     fn bands(&self) -> Result<Vec<Band>>;
     fn metadata(&self) -> HashMap<String, String>;
-    fn reader(&self) -> Result<impl Reader>;
+    fn reader(&self) -> impl Reader;
 }
 
 pub mod gdal_backend {
@@ -90,8 +90,9 @@ pub mod gdal_backend {
         fn metadata(&self) -> HashMap<String, String> {
             filter_metadata_gdal(&self.dataset)
         }
-        fn reader(&self) -> Result<impl Reader> {
-            Ok(GdalDataset::open(&self.path)?)
+        fn reader(&self) -> impl Reader {
+            // For object to exist, this should have been successful.
+            GdalDataset::open(&self.path).unwrap()
         }
     }
 
