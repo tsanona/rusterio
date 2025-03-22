@@ -2,20 +2,9 @@ use geo::AffineTransform;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{readers::Reader, Band},
+    components::{Band, File, Reader},
     errors::Result,
 };
-
-pub trait File: Debug + Sized {
-    fn open<P: AsRef<Path>>(path: P) -> Result<Self>;
-    fn description(&self) -> Result<String>;
-    fn size(&self) -> (usize, usize);
-    fn crs(&self) -> String;
-    fn transform(&self) -> Result<AffineTransform>;
-    fn bands(&self) -> Result<Vec<Band>>;
-    fn metadata(&self) -> HashMap<String, String>;
-    fn reader(&self) -> impl Reader;
-}
 
 pub mod gdal_backend {
     use super::*;
@@ -23,11 +12,11 @@ pub mod gdal_backend {
         errors::Result as GdalResult, raster::GdalType, Dataset as GdalDataset,
         Metadata as GdalMetadata, MetadataEntry as GdalMetadataEntry,
     };
-    use ndarray::{s, Array2, Array3};
+    use ndarray::Array2;
     use num::Num;
     use std::path::PathBuf;
 
-    use crate::tuple_to;
+    use crate::errors::RusterioError;
 
     fn affine_from_gdal(gdal_transform: [f64; 6]) -> AffineTransform {
         AffineTransform::new(
@@ -82,8 +71,9 @@ pub mod gdal_backend {
             for raster_band in self.dataset.rasterbands().collect::<GdalResult<Vec<_>>>()? {
                 let metadata = filter_metadata_gdal(&raster_band);
                 let name = raster_band.description()?;
+                let block_size = raster_band.block_size();
                 //let metadata = filter_metadata_gdal(&raster_band_result?);
-                bands.push(Band::new(name, metadata));
+                bands.push(Band::new(name, metadata, block_size));
             }
             Ok(bands)
         }
@@ -92,35 +82,63 @@ pub mod gdal_backend {
         }
         fn reader(&self) -> impl Reader {
             // For object to exist, this should have been successful.
-            GdalDataset::open(&self.path).unwrap()
+            GdalReader(self.path.to_path_buf())
         }
     }
 
-    impl Reader for gdal::Dataset {
-        fn read_window<T: GdalType + Num + Clone + Copy>(
+    struct GdalReader(PathBuf);
+
+    impl Reader for GdalReader {
+        fn read_band_window_as_array<
+            T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
+        >(
             &self,
-            band_indexes: &[usize],
-            offset: (usize, usize),
+            band_index: usize,
+            offset: (isize, isize),
             size: (usize, usize),
-        ) -> Result<Array3<T>> {
-            let shape = (band_indexes.len(), size.0, size.1);
-            let mut array = Array3::zeros(shape);
-            for band_index in band_indexes {
-                let buf = self.rasterband(*band_index)?.read_as::<T>(
-                    tuple_to(offset),
-                    size,
-                    size,
-                    None,
-                )?;
-                let buf_shape = buf.shape();
-                array
-                    .slice_mut(s![*band_index, .., ..])
-                    .assign(&Array2::from_shape_vec(
-                        (buf_shape.1, buf_shape.0),
-                        buf.data().to_vec(),
-                    )?)
+            mask: &Option<Array2<bool>>,
+        ) -> Result<Array2<T>> {
+            let array;
+            if let Some(mask) = mask {
+                if mask.mapv(i8::from).sum().eq(&0) {
+                    return Ok(Array2::zeros(size));
+                } else {
+                    array = mask.mapv(T::from)
+                }
+            } else {
+                array = Array2::ones(size);
             }
-            Ok(array)
+            let buffer = GdalDataset::open(&self.0)?
+                .rasterband(band_index + 1)?
+                .read_as::<T>(offset, size, size, None)?;
+            Array2::from_shape_vec(size, buffer.data().to_vec())
+                .map_err(RusterioError::NdarrayError)
+                .map(|read| array * read)
+        }
+
+        fn read_band_block_as_array<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+            &self,
+            index: (usize, usize),
+            band_index: usize,
+            mask: &Option<Array2<bool>>,
+        ) -> Result<Array2<T>> {
+            let dataset = GdalDataset::open(&self.0)?;
+            let rasterband = dataset.rasterband(band_index + 1)?;
+            let array;
+            if let Some(mask) = mask {
+                if mask.mapv(i8::from).sum().eq(&0) {
+                    return Ok(Array2::zeros(rasterband.block_size()));
+                } else {
+                    array = mask.mapv(T::from)
+                }
+            } else {
+                array = Array2::ones(rasterband.block_size());
+            }
+            let buffer = rasterband.read_block::<T>(index)?;
+            let buf_size = buffer.shape();
+            Array2::from_shape_vec((buf_size.1, buf_size.0), buffer.data().to_vec())
+                .map_err(RusterioError::NdarrayError)
+                .map(|read| array * read)
         }
     }
 }

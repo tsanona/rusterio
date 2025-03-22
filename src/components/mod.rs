@@ -1,19 +1,21 @@
 #![allow(dead_code)]
 extern crate geo_booleanop;
-use geo::{coord, Coord, BooleanOps, HasDimensions, Translate};
+use geo::{coord, BooleanOps, Coord, HasDimensions, Translate};
 
-pub mod files;
-mod readers;
+pub mod backends;
+pub mod file;
+pub mod reader;
 
-use files::File;
-
-
+pub use file::File;
+pub use reader::Reader;
 
 use geo::{AffineOps, AffineTransform, BoundingRect, Polygon, Rect};
-use readers::Reader;
 use std::{collections::HashMap, fmt::Debug};
 
-use crate::{errors::{Result, RusterioError}, tuple_to, CrsGeometry};
+use crate::{
+    errors::{Result, RusterioError},
+    tuple_to, CrsGeometry,
+};
 
 type Metadata = HashMap<String, String>;
 
@@ -21,13 +23,15 @@ type Metadata = HashMap<String, String>;
 pub struct Band {
     description: String,
     metadata: Metadata,
+    block_size: (usize, usize),
 }
 
 impl Band {
-    pub fn new(description: String, metadata: Metadata) -> Self {
+    pub fn new(description: String, metadata: Metadata, block_size: (usize, usize)) -> Self {
         Band {
             description,
             metadata,
+            block_size,
         }
     }
 }
@@ -99,53 +103,113 @@ impl<F: File> Raster<F> {
         &self.bands
     }
 
-    pub fn clip<'a, T: GdalType + Num + Clone + Copy>(&self, band_indexes: &'a [usize], geometry: CrsGeometry<Polygon>) -> Result<Array3<T>> {
-        self.geometry_view(band_indexes, geometry)?.read()
+    pub fn clip<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+        &self,
+        band_indexes: &'a [usize],
+        geometry: CrsGeometry<Polygon>,
+    ) -> Result<Array3<T>> {
+        use geo_rasterize::BinaryBuilder;
+
+        let view = self.geometry_view(band_indexes, &geometry)?;
+        let mut rasterizer = BinaryBuilder::new()
+            .width(view.bounds.width() as usize)
+            .height(view.bounds.height() as usize)
+            .build()?;
+        rasterizer.rasterize(&geometry.geometry.affine_transform(self.transform()))?;
+        let mask = rasterizer.finish();
+        view.read(Some(mask))
     }
 
-    fn pixel_view<'a>(&self, band_indexes: &'a [usize], offset: (u32, u32), size: (u32, u32)) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
+    pub fn pixel_view<'a>(
+        &self,
+        band_indexes: &'a [usize],
+        offset: (usize, usize),
+        size: (usize, usize),
+    ) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
         let (x_offset, y_offset) = tuple_to(offset);
         let pixel_bounds = Rect::new((0., 0.), tuple_to(size)).translate(x_offset, y_offset);
-        let raster_intersect = pixel_bounds.to_polygon().intersection(&self.bounds.geometry.to_polygon().affine_transform(self.transform()));
+        let raster_intersect = pixel_bounds.to_polygon().intersection(
+            &self
+                .bounds
+                .geometry
+                .to_polygon()
+                .affine_transform(self.transform()),
+        );
         if !raster_intersect.is_empty() {
-            let bounds = raster_intersect.affine_transform(self.transform()).bounding_rect().unwrap();
-            return Ok(RasterView { band_indexes, bounds, reader: self.file.reader() })
+            let bounds = raster_intersect.bounding_rect().unwrap();
+            return Ok(RasterView {
+                band_indexes,
+                bounds,
+                reader: self.file.reader(),
+            });
         }
         Err(RusterioError::NoIntersection)
-
-        
     }
 
-    fn geometry_view<'a>(&self, band_indexes: &'a [usize], geometry: CrsGeometry<Polygon>) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
-        let raster_intersect = geometry.projected_geometry(&self.bounds.crs)?.intersection(&self.bounds.geometry.to_polygon());
+    fn geometry_view<'a>(
+        &self,
+        band_indexes: &'a [usize],
+        geometry: &CrsGeometry<Polygon>,
+    ) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
+        let raster_intersect = geometry
+            .projected_geometry(&self.bounds.crs)?
+            .intersection(&self.bounds.geometry.to_polygon());
         if !raster_intersect.is_empty() {
-            let bounds = raster_intersect.affine_transform(self.transform()).bounding_rect().unwrap();
-            return Ok(RasterView { band_indexes, bounds, reader: self.file.reader() })
+            let bounds = raster_intersect
+                .affine_transform(self.transform())
+                .bounding_rect()
+                .unwrap();
+            return Ok(RasterView {
+                band_indexes,
+                bounds,
+                reader: self.file.reader(),
+            });
         }
         Err(RusterioError::NoIntersection)
     }
 }
 
-struct RasterView<'a, R: Reader> {
+pub struct RasterView<'a, R: Reader> {
     band_indexes: &'a [usize],
     bounds: Rect,
-    reader: R
+    reader: R,
 }
 
 use gdal::raster::GdalType;
+use ndarray::{parallel::prelude::*, Array2, Array3, ArrayViewMut, Axis};
 use num::Num;
-use ndarray::Array3;
 
 impl<'a, R: Reader> RasterView<'a, R> {
-    pub fn read<T: GdalType + Num + Clone + Copy>(self) -> Result<Array3<T>>{
-        self.reader.read_window::<T>(self.band_indexes, tuple_to(self.offset()), tuple_to(self.size()))
+    pub fn read<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+        self,
+        mask: Option<Array2<bool>>,
+    ) -> Result<Array3<T>> {
+        // do chunking
+        let size = (self.band_indexes.len(), self.size().0, self.size().0);
+        let mut array = Array3::zeros(size);
+        let fill_errors: Result<Vec<()>> = array
+            .axis_chunks_iter_mut(Axis(0), 1)
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, mut slice): (usize, ArrayViewMut<'_, T, _>)| {
+                let band = self.reader.read_band_window_as_array::<T>(
+                    idx,
+                    tuple_to(self.offset()),
+                    tuple_to(self.size()),
+                    &mask,
+                )?;
+                slice.assign(&band);
+                Ok(())
+            })
+            .collect();
+        fill_errors.map(|_| array)
     }
 
     fn offset(&self) -> (f64, f64) {
-        (self.bounds.max() - coord!{ x: self.bounds.width(), y: 0.}).x_y()
+        (self.bounds.max() - coord! { x: self.bounds.width(), y: 0.}).x_y()
     }
 
-    fn size(&self) -> (f64, f64) {
-        (self.bounds.width(), self.bounds.height())
+    fn size(&self) -> (usize, usize) {
+        (self.bounds.width() as usize, self.bounds.height() as usize)
     }
 }
