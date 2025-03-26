@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 extern crate geo_booleanop;
-use geo::{coord, BooleanOps, Coord, HasDimensions, Translate};
+use geo::{BooleanOps, Coord, HasDimensions, Translate};
 
 pub mod backends;
 pub mod file;
@@ -9,8 +9,10 @@ pub mod reader;
 pub use file::File;
 pub use reader::Reader;
 
-use geo::{AffineOps, AffineTransform, BoundingRect, Polygon, Rect};
-use std::{collections::HashMap, fmt::Debug};
+use geo::{AffineOps, AffineTransform, BoundingRect, Rect};
+use ndarray::{parallel::prelude::*, s, Array3, ArrayView2, Axis};
+use num::{Integer, Num};
+use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use crate::{
     errors::{Result, RusterioError},
@@ -23,15 +25,22 @@ type Metadata = HashMap<String, String>;
 pub struct Band {
     description: String,
     metadata: Metadata,
-    block_size: (usize, usize),
+    chunk_size: (usize, usize),
+    data_type: String,
 }
 
 impl Band {
-    pub fn new(description: String, metadata: Metadata, block_size: (usize, usize)) -> Self {
+    pub fn new(
+        description: String,
+        metadata: Metadata,
+        chunk_size: (usize, usize),
+        data_type: String,
+    ) -> Self {
         Band {
             description,
             metadata,
-            block_size,
+            chunk_size,
+            data_type,
         }
     }
 }
@@ -103,7 +112,8 @@ impl<F: File> Raster<F> {
         &self.bands
     }
 
-    pub fn clip<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+    // can only be done on view
+    /* pub fn clip<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
         &self,
         band_indexes: &'a [usize],
         geometry: CrsGeometry<Polygon>,
@@ -118,14 +128,19 @@ impl<F: File> Raster<F> {
         rasterizer.rasterize(&geometry.geometry.affine_transform(self.transform()))?;
         let mask = rasterizer.finish();
         view.read(Some(mask))
-    }
+    } */
 
-    pub fn pixel_view<'a>(
-        &self,
-        band_indexes: &'a [usize],
+    pub fn pixel_view<'raster: 'view, 'view, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static>(
+        &'raster self,
+        band_indexes: &'static [usize],
         offset: (usize, usize),
         size: (usize, usize),
-    ) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
+    ) -> Result<RasterView<'raster, 'view, T>> {
+        let reader: Arc<dyn Reader<'view, T>> = Arc::new(self.file.reader::<T>());
+        let bands: Vec<(usize, &Band)> = band_indexes
+            .into_iter()
+            .map(|idx| (*idx, &self.bands()[*idx]))
+            .collect();
         let (x_offset, y_offset) = tuple_to(offset);
         let pixel_bounds = Rect::new((0., 0.), tuple_to(size)).translate(x_offset, y_offset);
         let raster_intersect = pixel_bounds.to_polygon().intersection(
@@ -137,20 +152,31 @@ impl<F: File> Raster<F> {
         );
         if !raster_intersect.is_empty() {
             let bounds = raster_intersect.bounding_rect().unwrap();
+            let chunk_size = bands
+                .iter()
+                .map(|(_, band)| band.chunk_size)
+                .reduce(|(x_acc, y_acc), (x, y)| (x_acc.lcm(&x), y_acc.lcm(&y)))
+                .unwrap();
             return Ok(RasterView {
-                band_indexes,
+                bands,
                 bounds,
-                reader: self.file.reader(),
+                chunk_size,
+                reader,
             });
         }
         Err(RusterioError::NoIntersection)
     }
 
-    fn geometry_view<'a>(
+    /* fn geometry_view<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static>(
         &self,
-        band_indexes: &'a [usize],
+        band_indexes: &'static [usize],
         geometry: &CrsGeometry<Polygon>,
-    ) -> Result<RasterView<'a, impl Reader + use<'_, F>>> {
+    ) -> Result<RasterView<T>> {
+        let reader: Arc<dyn Reader<T>> = Arc::new(self.file.reader::<T>());
+        let bands: Vec<(usize, &Band, Arc<dyn Reader<T>>)> = band_indexes
+            .into_iter()
+            .map(|idx| (*idx, &self.bands()[*idx], reader.clone()))
+            .collect();
         let raster_intersect = geometry
             .projected_geometry(&self.bounds.crs)?
             .intersection(&self.bounds.geometry.to_polygon());
@@ -159,57 +185,139 @@ impl<F: File> Raster<F> {
                 .affine_transform(self.transform())
                 .bounding_rect()
                 .unwrap();
+            let chunk_size = bands
+                .iter()
+                .map(|(_, band, _)| band.chunk_size)
+                .reduce(|(x_acc, y_acc), (x, y)| (x_acc.lcm(&x), y_acc.lcm(&y)))
+                .unwrap();
             return Ok(RasterView {
-                band_indexes,
+                bands,
                 bounds,
-                reader: self.file.reader(),
+                chunk_size,
             });
         }
         Err(RusterioError::NoIntersection)
-    }
+    } */
 }
 
-pub struct RasterView<'a, R: Reader> {
-    band_indexes: &'a [usize],
+pub struct RasterView<'raster: 'reader, 'reader, T>
+where
+    T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
+{
+    //helps raster views support
+    //bands from multiple rasters.
+    /// Band references and readers.
+    bands: Vec<(usize, &'raster Band)>,
     bounds: Rect,
-    reader: R,
+    chunk_size: (usize, usize),
+    reader: Arc<dyn Reader<'reader, T>>,
 }
 
 use gdal::raster::GdalType;
-use ndarray::{parallel::prelude::*, Array2, Array3, ArrayViewMut, Axis};
-use num::Num;
 
-impl<'a, R: Reader> RasterView<'a, R> {
-    pub fn read<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
-        self,
-        mask: Option<Array2<bool>>,
-    ) -> Result<Array3<T>> {
+impl<'raster, 'reader, T> RasterView<'raster, 'reader, T>
+where
+    T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static,
+{
+    pub fn read<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
         // do chunking
-        let size = (self.band_indexes.len(), self.size().0, self.size().0);
-        let mut array = Array3::zeros(size);
-        let fill_errors: Result<Vec<()>> = array
+        let mut array = Array3::zeros(self.array_size());
+        let offset = tuple_to(self.offset());
+        let errors: Result<()> = array
             .axis_chunks_iter_mut(Axis(0), 1)
-            .into_par_iter()
-            .enumerate()
-            .map(|(idx, mut slice): (usize, ArrayViewMut<'_, T, _>)| {
-                let band = self.reader.read_band_window_as_array::<T>(
-                    idx,
-                    tuple_to(self.offset()),
-                    tuple_to(self.size()),
-                    &mask,
-                )?;
-                slice.assign(&band);
-                Ok(())
+            //.into_par_iter()
+            .zip(&self.bands)
+            .map(|(mut band_chunk, (band_idx, band_info))| {
+                let chunk_size = band_info.chunk_size;
+                // check if view is smaller in area to chunk
+                if (band_chunk.len() < chunk_size.0 * chunk_size.1) | true {
+                    let dims = band_chunk.dim();
+                    let read_array = self.reader
+                        .read_band_window_as_array(
+                            *band_idx,
+                            offset,
+                            tuple_to((dims.1, dims.2)),
+                            mask,
+                        );
+                    read_array.map(|read| band_chunk.assign(&read))
+                // chunk with mask
+                } else if let Some(mask) = mask.as_ref() {
+                    let errors: Result<()> = band_chunk
+                    .axis_chunks_iter_mut(Axis(1), chunk_size.0)
+                    //.zip(mask.axis_chunks_iter(Axis(0), chunk_size.0))
+                    .enumerate()
+                    .map(move |(width_idx, mut width_chunk)| {
+                        let data_chunks = width_chunk
+                            .axis_chunks_iter_mut(Axis(2), chunk_size.1)
+                            .into_par_iter();
+                        //let mask_chunks: AxisChunksIter<'_, bool, _> = mask_width_chunk.axis_chunks_iter(Axis(1), chunk_size.1);
+                        let errors: Result<()> = data_chunks
+                            //.zip(mask_chunks)
+                            .enumerate()
+                            .map(|(hight_index, mut array_chunk)| {
+                                let dims = array_chunk.dim();
+                                let offset = (width_idx * chunk_size.0, hight_index * chunk_size.1);
+                                let size = tuple_to((dims.1, dims.2));
+                                let chunk_mask = mask.slice(s![offset.0..size.0, offset.1..size.1]);
+                                self.reader.read_band_window_as_array(
+                                        *band_idx,
+                                        offset,
+                                        size,
+                                        Some(chunk_mask),
+                                    ).map(|read| array_chunk.assign(&read))
+                            })
+                            .collect();
+                        errors
+                    })
+                    .collect();
+                    errors
+                } else { 
+                    let errors: Result<()> = band_chunk
+                    .axis_chunks_iter_mut(Axis(1), chunk_size.0)
+                    //.zip(mask.axis_chunks_iter(Axis(0), chunk_size.0))
+                    .enumerate()
+                    .map(move |(width_idx, mut width_chunk)| {
+                        let data_chunks = width_chunk
+                            .axis_chunks_iter_mut(Axis(2), chunk_size.1)
+                            .into_par_iter();
+                        //let mask_chunks: AxisChunksIter<'_, bool, _> = mask_width_chunk.axis_chunks_iter(Axis(1), chunk_size.1);
+                        let errors: Result<()> = data_chunks
+                            //.zip(mask_chunks)
+                            .enumerate()
+                            .map(|(hight_index, mut array_chunk)| {
+                                let dims = array_chunk.dim();
+                                let offset = (width_idx * chunk_size.0, hight_index * chunk_size.1);
+                                let size = tuple_to((dims.1, dims.2));
+                                self.reader.read_band_window_as_array(
+                                        *band_idx,
+                                        offset,
+                                        size,
+                                        None,
+                                    ).map(|read| array_chunk.assign(&read))
+                            })
+                            .collect();
+                        errors
+                    })
+                    .collect();
+                    errors
+                 }
             })
             .collect();
-        fill_errors.map(|_| array)
+        errors.map(|_| array)
     }
 
+    //pub fn save()
+
+    /// Lower left corner of view.
     fn offset(&self) -> (f64, f64) {
-        (self.bounds.max() - coord! { x: self.bounds.width(), y: 0.}).x_y()
+        self.bounds.min().x_y()
     }
 
-    fn size(&self) -> (usize, usize) {
-        (self.bounds.width() as usize, self.bounds.height() as usize)
+    fn array_size(&self) -> (usize, usize, usize) {
+        (
+            self.bands.len(),
+            self.bounds.width() as usize,
+            self.bounds.height() as usize,
+        )
     }
 }

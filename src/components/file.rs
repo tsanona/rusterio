@@ -1,4 +1,5 @@
 use geo::AffineTransform;
+use num::Num;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
@@ -14,5 +15,7 @@ pub trait File: Debug + Sized {
     fn transform(&self) -> Result<AffineTransform>;
     fn bands(&self) -> Result<Vec<Band>>;
     fn metadata(&self) -> HashMap<String, String>;
-    fn reader(&self) -> impl Reader;
+    fn reader<T: gdal::raster::GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+        &self,
+    ) -> impl Reader<T>;
 }

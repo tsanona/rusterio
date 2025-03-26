@@ -4,6 +4,7 @@ mod components;
 mod errors;
 
 pub use components::{backends, File, Raster, Reader};
+pub use backends::gdal_backend;
 
 use geo::{proj::Proj, Transform};
 use geo_traits::GeometryTrait;
@@ -48,14 +49,13 @@ mod tests {
         let raster_path = "SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:10:EPSG_32633";
         let file = GdalFile::open(raster_path).unwrap();
         let raster = Raster::new(file).unwrap();
+        println!("{:?}", raster.size());
+        let view = raster
+        .pixel_view::<u16>(&[0, 1, 2], (0, 0), (10980, 10980))
+        .unwrap();
         println!(
             "{:#?}",
-            raster
-                .pixel_view(&[0, 1, 2], (0, 0), (1250, 1250))
-                .unwrap()
-                .read::<u16>(None)
-                .unwrap()
-                .shape()
+            view.read(None).unwrap()[[0, 0, 0]]
         );
         //println!("{:#?}", raster.read_pixel_window(&[0, 1, 2, 3], (0, 0), (125, 125)).unwrap().shape())
         //assert_eq!(raster.size(), tuple_to(dataset.raster_size()))

@@ -12,7 +12,7 @@ pub mod gdal_backend {
         errors::Result as GdalResult, raster::GdalType, Dataset as GdalDataset,
         Metadata as GdalMetadata, MetadataEntry as GdalMetadataEntry,
     };
-    use ndarray::Array2;
+    use ndarray::{Array2, ArrayView2};
     use num::Num;
     use std::path::PathBuf;
 
@@ -72,15 +72,18 @@ pub mod gdal_backend {
                 let metadata = filter_metadata_gdal(&raster_band);
                 let name = raster_band.description()?;
                 let block_size = raster_band.block_size();
+                let data_type = raster_band.band_type().name();
                 //let metadata = filter_metadata_gdal(&raster_band_result?);
-                bands.push(Band::new(name, metadata, block_size));
+                bands.push(Band::new(name, metadata, block_size, data_type));
             }
             Ok(bands)
         }
         fn metadata(&self) -> HashMap<String, String> {
             filter_metadata_gdal(&self.dataset)
         }
-        fn reader(&self) -> impl Reader {
+        fn reader<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+            &'a self,
+        ) -> impl Reader<'a, T> {
             // For object to exist, this should have been successful.
             GdalReader(self.path.to_path_buf())
         }
@@ -88,15 +91,16 @@ pub mod gdal_backend {
 
     struct GdalReader(PathBuf);
 
-    impl Reader for GdalReader {
-        fn read_band_window_as_array<
-            T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
-        >(
-            &self,
+    impl<'a, T> Reader<'a, T> for GdalReader
+    where
+        T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
+    {
+        fn read_band_window_as_array<'b>(
+            &'b self,
             band_index: usize,
-            offset: (isize, isize),
+            offset: (usize, usize),
             size: (usize, usize),
-            mask: &Option<Array2<bool>>,
+            mask: Option<ArrayView2<'b, bool>>,
         ) -> Result<Array2<T>> {
             let array;
             if let Some(mask) = mask {
@@ -108,22 +112,35 @@ pub mod gdal_backend {
             } else {
                 array = Array2::ones(size);
             }
-            let buffer = GdalDataset::open(&self.0)?
-                .rasterband(band_index + 1)?
-                .read_as::<T>(offset, size, size, None)?;
+            let dataset = GdalDataset::open(&self.0)?;
+            let rasterband = dataset.rasterband(band_index + 1)?;
+            if T::gdal_ordinal() != rasterband.band_type() as u32 {
+                Err(gdal::errors::GdalError::BadArgument(
+                    "result array type must match band data types".to_string(),
+                ))?
+            }
+            let buffer = rasterband.read_as::<T>(
+                (offset.0 as isize, offset.1 as isize),
+                size,
+                size,
+                None,
+            )?;
             Array2::from_shape_vec(size, buffer.data().to_vec())
                 .map_err(RusterioError::NdarrayError)
                 .map(|read| array * read)
         }
 
-        fn read_band_block_as_array<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+        /* fn read_band_block_as_array(
             &self,
             index: (usize, usize),
             band_index: usize,
-            mask: &Option<Array2<bool>>,
+            mask: &Option<ArrayView2<'a, bool>>,
         ) -> Result<Array2<T>> {
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(band_index + 1)?;
+            if T::gdal_ordinal() != rasterband.band_type() as u32 {
+                Err(gdal::errors::GdalError::BadArgument("result array type must match band data types".to_string()))?
+            }
             let array;
             if let Some(mask) = mask {
                 if mask.mapv(i8::from).sum().eq(&0) {
@@ -139,6 +156,6 @@ pub mod gdal_backend {
             Array2::from_shape_vec((buf_size.1, buf_size.0), buffer.data().to_vec())
                 .map_err(RusterioError::NdarrayError)
                 .map(|read| array * read)
-        }
+        } */
     }
 }
