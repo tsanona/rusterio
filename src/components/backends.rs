@@ -84,7 +84,6 @@ pub mod gdal_backend {
         fn reader<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
             &'a self,
         ) -> impl Reader<'a, T> {
-            // For object to exist, this should have been successful.
             GdalReader(self.path.to_path_buf())
         }
     }

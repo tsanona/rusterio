@@ -10,7 +10,7 @@ pub use file::File;
 pub use reader::Reader;
 
 use geo::{AffineOps, AffineTransform, BoundingRect, Rect};
-use ndarray::{parallel::prelude::*, s, Array3, ArrayView2, Axis};
+use ndarray::{parallel::prelude::*, Array3, ArrayView2, Axis};
 use num::{Integer, Num};
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
@@ -220,12 +220,52 @@ where
     T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static,
 {
     pub fn read<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
+        let mut array = Array3::zeros(self.array_size());
+        let offset = tuple_to(self.offset());
+        for (mut band_chunk, (band_idx, _)) in  array
+            .axis_chunks_iter_mut(Axis(0), 1)
+            .zip(&self.bands) {
+            let dims = band_chunk.dim();
+            let read_array = self.reader
+                .read_band_window_as_array(
+                    *band_idx,
+                    offset,
+                    tuple_to((dims.1, dims.2)),
+                    mask,
+                );
+            read_array.map(|read| band_chunk.assign(&read))?
+            }
+        Ok(array)
+    }
+
+    pub fn read_async_bands<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
+        let mut array = Array3::zeros(self.array_size());
+        let offset = tuple_to(self.offset());
+        let errors: Result<()> = array
+            .axis_chunks_iter_mut(Axis(0), 1)
+                .into_par_iter()
+                .zip(&self.bands)
+                .map(|(mut band_chunk, (band_idx, _))| {
+                    let dims = band_chunk.dim();
+                    let read_array = self.reader
+                        .read_band_window_as_array(
+                            *band_idx,
+                            offset,
+                            tuple_to((dims.1, dims.2)),
+                            mask,
+                        );
+                    read_array.map(|read| band_chunk.assign(&read))
+                }).collect();
+        errors.map(|_| array)
+    }
+
+    /* pub fn read_async_chunks<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
         // do chunking
         let mut array = Array3::zeros(self.array_size());
         let offset = tuple_to(self.offset());
         let errors: Result<()> = array
             .axis_chunks_iter_mut(Axis(0), 1)
-            //.into_par_iter()
+            .into_par_iter()
             .zip(&self.bands)
             .map(|(mut band_chunk, (band_idx, band_info))| {
                 let chunk_size = band_info.chunk_size;
@@ -305,7 +345,7 @@ where
             .collect();
         errors.map(|_| array)
     }
-
+ */
     //pub fn save()
 
     /// Lower left corner of view.
