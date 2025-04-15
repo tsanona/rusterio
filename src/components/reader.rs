@@ -4,19 +4,18 @@ use num::Num;
 
 use crate::errors::Result;
 
-pub trait Reader<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>:
-    Send + Sync + 'a
+pub trait BandReader<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>:
+    Send + Sync
 {
-    fn read_band_window_as_array<'b>(
-        &'b self,
-        band_index: usize,
+    fn read_window_as_array(
+        &self,
         // Position of bottom left corner.
         offset: (usize, usize),
         size: (usize, usize),
-        mask: Option<ArrayView2<'b, bool>>,
+        mask: Option<ArrayView2<bool>>,
     ) -> Result<Array2<T>>;
 
-    /* fn read_band_block_as_array(
+    /* fn read_block_as_array(
         &self,
         index: (usize, usize),
         band_index: usize,

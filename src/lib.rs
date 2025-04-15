@@ -3,8 +3,8 @@
 mod components;
 mod errors;
 
-pub use components::{backends, File, Raster, Reader};
 pub use backends::gdal_backend;
+pub use components::{backends, BandReader, File, Raster};
 
 use geo::{proj::Proj, Transform};
 use geo_traits::GeometryTrait;
@@ -51,12 +51,9 @@ mod tests {
         let raster = Raster::new(file).unwrap();
         println!("{:?}", raster.size());
         let view = raster
-        .pixel_view::<u16>(&[0, 1, 2], (0, 0), (10980, 10980))
-        .unwrap();
-        println!(
-            "{:#?}",
-            view.read(None).unwrap()[[0, 0, 0]]
-        );
+            .pixel_view::<u16>(&[0, 1, 2], (0, 0), (100, 100))
+            .unwrap();
+        println!("{:#?}", view.read(None).unwrap().shape());
         //println!("{:#?}", raster.read_pixel_window(&[0, 1, 2, 3], (0, 0), (125, 125)).unwrap().shape())
         //assert_eq!(raster.size(), tuple_to(dataset.raster_size()))
     }

@@ -2,7 +2,7 @@ use geo::AffineTransform;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{Band, File, Reader},
+    components::{Band, BandReader, File},
     errors::Result,
 };
 
@@ -71,35 +71,34 @@ pub mod gdal_backend {
             for raster_band in self.dataset.rasterbands().collect::<GdalResult<Vec<_>>>()? {
                 let metadata = filter_metadata_gdal(&raster_band);
                 let name = raster_band.description()?;
-                let block_size = raster_band.block_size();
                 let data_type = raster_band.band_type().name();
                 //let metadata = filter_metadata_gdal(&raster_band_result?);
-                bands.push(Band::new(name, metadata, block_size, data_type));
+                bands.push(Band::new(name, metadata, data_type));
             }
             Ok(bands)
         }
         fn metadata(&self) -> HashMap<String, String> {
             filter_metadata_gdal(&self.dataset)
         }
-        fn reader<'a, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
-            &'a self,
-        ) -> impl Reader<'a, T> {
-            GdalReader(self.path.to_path_buf())
+        fn band_reader<'reader, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
+            &self,
+            band_index: usize,
+        ) -> impl BandReader<T> + 'reader {
+            GdalReader(self.path.to_path_buf(), band_index)
         }
     }
 
-    struct GdalReader(PathBuf);
+    struct GdalReader(PathBuf, usize);
 
-    impl<'a, T> Reader<'a, T> for GdalReader
+    impl<T> BandReader<T> for GdalReader
     where
         T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
     {
-        fn read_band_window_as_array<'b>(
-            &'b self,
-            band_index: usize,
+        fn read_window_as_array(
+            &self,
             offset: (usize, usize),
             size: (usize, usize),
-            mask: Option<ArrayView2<'b, bool>>,
+            mask: Option<ArrayView2<bool>>,
         ) -> Result<Array2<T>> {
             let array;
             if let Some(mask) = mask {
@@ -112,7 +111,7 @@ pub mod gdal_backend {
                 array = Array2::ones(size);
             }
             let dataset = GdalDataset::open(&self.0)?;
-            let rasterband = dataset.rasterband(band_index + 1)?;
+            let rasterband = dataset.rasterband(&self.1 + 1)?;
             if T::gdal_ordinal() != rasterband.band_type() as u32 {
                 Err(gdal::errors::GdalError::BadArgument(
                     "result array type must match band data types".to_string(),

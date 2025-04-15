@@ -7,12 +7,12 @@ pub mod file;
 pub mod reader;
 
 pub use file::File;
-pub use reader::Reader;
+pub use reader::BandReader;
 
 use geo::{AffineOps, AffineTransform, BoundingRect, Rect};
 use ndarray::{parallel::prelude::*, Array3, ArrayView2, Axis};
-use num::{Integer, Num};
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use num::Num;
+use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
     errors::{Result, RusterioError},
@@ -25,21 +25,15 @@ type Metadata = HashMap<String, String>;
 pub struct Band {
     description: String,
     metadata: Metadata,
-    chunk_size: (usize, usize),
+    //chunk_size: (usize, usize),
     data_type: String,
 }
 
 impl Band {
-    pub fn new(
-        description: String,
-        metadata: Metadata,
-        chunk_size: (usize, usize),
-        data_type: String,
-    ) -> Self {
+    pub fn new(description: String, metadata: Metadata, data_type: String) -> Self {
         Band {
             description,
             metadata,
-            chunk_size,
             data_type,
         }
     }
@@ -130,16 +124,25 @@ impl<F: File> Raster<F> {
         view.read(Some(mask))
     } */
 
-    pub fn pixel_view<'raster: 'view, 'view, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static>(
+    pub fn pixel_view<
+        'raster: 'viewer,
+        'viewer,
+        T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static,
+    >(
         &'raster self,
         band_indexes: &'static [usize],
         offset: (usize, usize),
         size: (usize, usize),
-    ) -> Result<RasterView<'raster, 'view, T>> {
-        let reader: Arc<dyn Reader<'view, T>> = Arc::new(self.file.reader::<T>());
-        let bands: Vec<(usize, &Band)> = band_indexes
+    ) -> Result<RasterView<'viewer, T>> {
+        let bands: Vec<(usize, &Band, Box<dyn BandReader<T>>)> = band_indexes
             .into_iter()
-            .map(|idx| (*idx, &self.bands()[*idx]))
+            .map(|idx| {
+                (
+                    *idx,
+                    &self.bands()[*idx],
+                    Box::new(self.file.band_reader(*idx)) as Box<dyn BandReader<T>>,
+                )
+            })
             .collect();
         let (x_offset, y_offset) = tuple_to(offset);
         let pixel_bounds = Rect::new((0., 0.), tuple_to(size)).translate(x_offset, y_offset);
@@ -152,17 +155,7 @@ impl<F: File> Raster<F> {
         );
         if !raster_intersect.is_empty() {
             let bounds = raster_intersect.bounding_rect().unwrap();
-            let chunk_size = bands
-                .iter()
-                .map(|(_, band)| band.chunk_size)
-                .reduce(|(x_acc, y_acc), (x, y)| (x_acc.lcm(&x), y_acc.lcm(&y)))
-                .unwrap();
-            return Ok(RasterView {
-                bands,
-                bounds,
-                chunk_size,
-                reader,
-            });
+            return Ok(RasterView { bands, bounds });
         }
         Err(RusterioError::NoIntersection)
     }
@@ -200,157 +193,49 @@ impl<F: File> Raster<F> {
     } */
 }
 
-pub struct RasterView<'raster: 'reader, 'reader, T>
+pub struct RasterView<'raster, T>
 where
     T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
 {
     //helps raster views support
     //bands from multiple rasters.
     /// Band references and readers.
-    bands: Vec<(usize, &'raster Band)>,
+    bands: Vec<(usize, &'raster Band, Box<dyn BandReader<T>>)>,
     bounds: Rect,
-    chunk_size: (usize, usize),
-    reader: Arc<dyn Reader<'reader, T>>,
 }
 
 use gdal::raster::GdalType;
 
-impl<'raster, 'reader, T> RasterView<'raster, 'reader, T>
+impl<'raster, T> RasterView<'raster, T>
 where
     T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync + 'static,
 {
+    pub fn stack(self, view: RasterView<'raster, T>) -> Result<RasterView<'raster, T>> {
+        unimplemented!()
+    }
+
     pub fn read<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
         let mut array = Array3::zeros(self.array_size());
         let offset = tuple_to(self.offset());
-        for (mut band_chunk, (band_idx, _)) in  array
-            .axis_chunks_iter_mut(Axis(0), 1)
-            .zip(&self.bands) {
-            let dims = band_chunk.dim();
-            let read_array = self.reader
-                .read_band_window_as_array(
-                    *band_idx,
-                    offset,
-                    tuple_to((dims.1, dims.2)),
-                    mask,
-                );
-            read_array.map(|read| band_chunk.assign(&read))?
-            }
-        Ok(array)
-    }
-
-    pub fn read_async_bands<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
-        let mut array = Array3::zeros(self.array_size());
-        let offset = tuple_to(self.offset());
         let errors: Result<()> = array
-            .axis_chunks_iter_mut(Axis(0), 1)
-                .into_par_iter()
-                .zip(&self.bands)
-                .map(|(mut band_chunk, (band_idx, _))| {
-                    let dims = band_chunk.dim();
-                    let read_array = self.reader
-                        .read_band_window_as_array(
-                            *band_idx,
-                            offset,
-                            tuple_to((dims.1, dims.2)),
-                            mask,
-                        );
-                    read_array.map(|read| band_chunk.assign(&read))
-                }).collect();
-        errors.map(|_| array)
-    }
-
-    /* pub fn read_async_chunks<'a>(&'a self, mask: Option<ArrayView2<'a, bool>>) -> Result<Array3<T>> {
-        // do chunking
-        let mut array = Array3::zeros(self.array_size());
-        let offset = tuple_to(self.offset());
-        let errors: Result<()> = array
-            .axis_chunks_iter_mut(Axis(0), 1)
+            .axis_iter_mut(Axis(0))
             .into_par_iter()
             .zip(&self.bands)
-            .map(|(mut band_chunk, (band_idx, band_info))| {
-                let chunk_size = band_info.chunk_size;
-                // check if view is smaller in area to chunk
-                if (band_chunk.len() < chunk_size.0 * chunk_size.1) | true {
-                    let dims = band_chunk.dim();
-                    let read_array = self.reader
-                        .read_band_window_as_array(
-                            *band_idx,
-                            offset,
-                            tuple_to((dims.1, dims.2)),
-                            mask,
-                        );
-                    read_array.map(|read| band_chunk.assign(&read))
-                // chunk with mask
-                } else if let Some(mask) = mask.as_ref() {
-                    let errors: Result<()> = band_chunk
-                    .axis_chunks_iter_mut(Axis(1), chunk_size.0)
-                    //.zip(mask.axis_chunks_iter(Axis(0), chunk_size.0))
-                    .enumerate()
-                    .map(move |(width_idx, mut width_chunk)| {
-                        let data_chunks = width_chunk
-                            .axis_chunks_iter_mut(Axis(2), chunk_size.1)
-                            .into_par_iter();
-                        //let mask_chunks: AxisChunksIter<'_, bool, _> = mask_width_chunk.axis_chunks_iter(Axis(1), chunk_size.1);
-                        let errors: Result<()> = data_chunks
-                            //.zip(mask_chunks)
-                            .enumerate()
-                            .map(|(hight_index, mut array_chunk)| {
-                                let dims = array_chunk.dim();
-                                let offset = (width_idx * chunk_size.0, hight_index * chunk_size.1);
-                                let size = tuple_to((dims.1, dims.2));
-                                let chunk_mask = mask.slice(s![offset.0..size.0, offset.1..size.1]);
-                                self.reader.read_band_window_as_array(
-                                        *band_idx,
-                                        offset,
-                                        size,
-                                        Some(chunk_mask),
-                                    ).map(|read| array_chunk.assign(&read))
-                            })
-                            .collect();
-                        errors
-                    })
-                    .collect();
-                    errors
-                } else { 
-                    let errors: Result<()> = band_chunk
-                    .axis_chunks_iter_mut(Axis(1), chunk_size.0)
-                    //.zip(mask.axis_chunks_iter(Axis(0), chunk_size.0))
-                    .enumerate()
-                    .map(move |(width_idx, mut width_chunk)| {
-                        let data_chunks = width_chunk
-                            .axis_chunks_iter_mut(Axis(2), chunk_size.1)
-                            .into_par_iter();
-                        //let mask_chunks: AxisChunksIter<'_, bool, _> = mask_width_chunk.axis_chunks_iter(Axis(1), chunk_size.1);
-                        let errors: Result<()> = data_chunks
-                            //.zip(mask_chunks)
-                            .enumerate()
-                            .map(|(hight_index, mut array_chunk)| {
-                                let dims = array_chunk.dim();
-                                let offset = (width_idx * chunk_size.0, hight_index * chunk_size.1);
-                                let size = tuple_to((dims.1, dims.2));
-                                self.reader.read_band_window_as_array(
-                                        *band_idx,
-                                        offset,
-                                        size,
-                                        None,
-                                    ).map(|read| array_chunk.assign(&read))
-                            })
-                            .collect();
-                        errors
-                    })
-                    .collect();
-                    errors
-                 }
+            .map(|(mut band, (_, _, reader))| {
+                let read_array = reader.read_window_as_array(offset, band.dim(), mask);
+                read_array.map(|read| band.assign(&read))
             })
             .collect();
         errors.map(|_| array)
     }
- */
-    //pub fn save()
 
     /// Lower left corner of view.
     fn offset(&self) -> (f64, f64) {
         self.bounds.min().x_y()
+    }
+
+    fn offset_coords(&self) -> Coord {
+        self.bounds.min()
     }
 
     fn array_size(&self) -> (usize, usize, usize) {

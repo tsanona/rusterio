@@ -12,8 +12,10 @@ license-file = "LICENSE"
 [dependencies]
 gdal = "0.17.1"
 # raster-utils = { git="https://github.com/tsanona/raster-utils.git", features = ["use-rayon"] }
-geo = { version="0.29.3", features = ["use-proj"]}
+geo = { version="0.29.3", features = ["use-proj"] }
 geo-traits = "0.2.0"
+geo-booleanop = "0.3.2"
+geo-rasterize = { git="https://github.com/tsanona/geo-rasterize.git", branch = "update-dependencies" }
 
 ndarray = { version = "0.16.1", features = ["rayon"] }
 
@@ -24,8 +26,6 @@ thiserror = "2.0.12"
 
 chrono = "0.4.40"
 num = "0.4.3"
-geo-booleanop = "0.3.2"
-geo-rasterize = { git="https://github.com/tsanona/geo-rasterize.git", branch = "update-dependencies"}
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["async", "async_tokio"] }
