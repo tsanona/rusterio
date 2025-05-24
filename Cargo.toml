@@ -28,7 +28,6 @@ num = "0.4.3"
 log = "0.4.27"
 shrinkwraprs = "0.3.0"
 either = "1.15.0"
-derive-new = "0.7.0"
 num-traits = "0.2.19"
 
 [dev-dependencies]

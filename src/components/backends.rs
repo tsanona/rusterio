@@ -75,12 +75,12 @@ pub mod gdal_backend {
             let description = raster_band.description()?;
             let mut metadata = filter_metadata_gdal(&raster_band);
             let name = metadata.remove("BANDNAME").unwrap(); // TODO: this is sentinel2 data specific... generalize!
-            Ok(RasterBand::new(
+            Ok(RasterBand {
                 description,
                 name,
                 metadata,
-                Arc::new(Box::new(GdalReader(self.path.clone(), index + 1))),
-            ))
+                reader: Arc::new(Box::new(GdalReader(self.path.clone(), index + 1))),
+            })
         }
         fn metadata(&self) -> HashMap<String, String> {
             filter_metadata_gdal(&self.dataset)

@@ -1,7 +1,6 @@
 use geo::{AffineOps, AffineTransform, Rect};
-use itertools::Itertools;
 use num::Integer;
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 use crate::{
     cast_tuple,
@@ -12,7 +11,7 @@ use crate::{
 
 use super::{view::ViewBand, PixelBounds};
 
-#[derive(Debug, derive_new::new)]
+#[derive(Debug)]
 pub struct RasterBand<T: DataType> {
     pub description: String,
     pub name: String,
@@ -23,7 +22,7 @@ pub struct RasterBand<T: DataType> {
 }
 
 #[derive(Debug)]
-pub struct RasterGroupInfo {
+struct RasterGroupInfo {
     pub description: String,
     /// Geo to Pix transform.
     /// Affine transform from `bounds` to pixel coordinates.
@@ -43,37 +42,83 @@ struct RasterGroup<T: DataType> {
     bands: Vec<RasterBand<T>>,
 }
 
-type BandOrder = HashMap<usize, (usize, usize)>;
+struct RasterBands<T: DataType>(Vec<RasterGroup<T>>);
 
-#[derive(Shrinkwrap)]
-#[shrinkwrap(mutable)]
-struct RasterGroups<T: DataType>(Vec<RasterGroup<T>>);
-
-impl<T: DataType> From<RasterGroup<T>> for RasterGroups<T> {
+impl<T: DataType> From<RasterGroup<T>> for RasterBands<T> {
     fn from(value: RasterGroup<T>) -> Self {
         Self(vec![value])
     }
 }
 
-impl<T: DataType> RasterGroups<T> {
+impl<T: DataType> RasterBands<T> {
     fn new() -> Self {
         Self(Vec::new())
     }
 
-    fn group_indexed_raster_bands(&self) -> Vec<(usize, &RasterBand<T>)> {
-        self.iter()
+    fn iter(&self) -> impl Iterator<Item = &RasterBand<T>> {
+        self.0.iter().flat_map(|group| group.bands.iter())
+    }
+
+    fn num_bands(&self) -> usize {
+        self.groups()
+            .fold(0, |sum, RasterGroup { info: _, bands }| sum + bands.len())
+    }
+
+    fn group(&self, index: usize) -> &RasterGroup<T> {
+        &self.0[index]
+    }
+
+    fn groups(&self) -> impl Iterator<Item = &RasterGroup<T>> {
+        self.0.iter()
+    }
+
+    fn append(&mut self, other: &mut RasterBands<T>) {
+        self.0.append(other.0.as_mut())
+    }
+
+    fn zipped(&self) -> Vec<(usize, &RasterBand<T>)> {
+        self.groups()
             .enumerate()
             .flat_map(|(idx, group)| group.bands.iter().map(move |band| (idx, band)))
             .collect()
     }
+}
 
-    fn num_bands(&self) -> usize {
-        self.iter()
-            .fold(0, |sum, RasterGroup { info: _, bands }| sum + bands.len())
-    }
+#[derive(Debug)]
+struct PixelSapce {
+    bounds: PixelBounds,
+    transform: AffineTransform,
+}
 
-    fn raster_bands(&self) -> Vec<&RasterBand<T>> {
-        self.iter().flat_map(|group| group.bands.iter()).collect()
+impl PixelSapce {
+    fn from<'a>(
+        bounds: &GeoBounds,
+        transforms: impl Iterator<Item = &'a AffineTransform>,
+    ) -> Result<Self> {
+        let result_pixel_bounds: Result<Vec<PixelBounds>> = transforms
+            .into_iter()
+            .map(|transform| PixelBounds::try_from(bounds.geometry.affine_transform(transform)))
+            .collect();
+        let mut pixel_bounds = result_pixel_bounds?;
+        let mut raster_pixel_shape = pixel_bounds.pop().unwrap().max().x_y();
+        for pixel_shape in pixel_bounds.into_iter().map(|bounds| bounds.max().x_y()) {
+            raster_pixel_shape = (
+                raster_pixel_shape.0.lcm(&pixel_shape.0),
+                raster_pixel_shape.1.lcm(&pixel_shape.1),
+            )
+        }
+        let transform = AffineTransform::new(
+            bounds.geometry.width() / (raster_pixel_shape.0 as f64),
+            0.,
+            bounds.geometry.min().x,
+            0.,
+            bounds.geometry.height() / (raster_pixel_shape.1 as f64),
+            bounds.geometry.min().y,
+        );
+        Ok(Self {
+            bounds: Rect::new((0, 0), raster_pixel_shape).try_into()?,
+            transform,
+        })
     }
 }
 
@@ -86,28 +131,21 @@ pub struct Raster<T: DataType> {
     /// `min @ (0, 0)` and `max @ array_size`.
     bounds: GeoBounds,
     //pixel_bounds: PixelBounds,
-    groups: RasterGroups<T>,
+    bands: RasterBands<T>,
 }
 
 impl<T: DataType> Debug for Raster<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let f = &mut f.debug_struct("Raster");
-        let bands: Vec<&String> = self
-            .groups
-            .raster_bands()
-            .into_iter()
-            .map(|band| &band.name)
-            .collect();
+        let bands: Vec<&String> = self.bands.iter().map(|band| &band.name).collect();
+        let pixel_space = PixelSapce::from(
+            &self.bounds,
+            self.bands.groups().map(|group| &group.info.transform),
+        )
+        .unwrap();
         f.field("geo rect", &(self.bounds.geometry))
             .field("geo shape", &(self.bounds.shape()))
-            .field(
-                "pixel shape",
-                &Self::pixel_bounds(
-                    &self.bounds,
-                    self.groups.iter().map(|group| &group.info).collect(),
-                )
-                .unwrap(),
-            )
+            .field("pixel space", &pixel_space)
             .field("bands", &bands)
             .finish()
     }
@@ -133,58 +171,29 @@ impl<T: DataType> Raster<T> {
             metadata,
         };
         let raster_bands = file.bands(band_indexes, drop)?;
-        let groups = RasterGroups::from(RasterGroup {
+        let bands = RasterBands::from(RasterGroup {
             info,
             bands: raster_bands,
         });
 
         //TODO: assert!(bands.datatype == T)
 
-        Ok(Self { bounds, groups })
+        Ok(Self { bounds, bands })
     }
 
     pub fn stack(rasters: Vec<Raster<T>>) -> Result<Raster<T>> {
         let mut stack_iter = rasters
             .into_iter()
-            .map(|raster| (raster.bounds, raster.groups));
-        let (mut stack_geo_bounds, mut stack_groups) = stack_iter.next().unwrap();
-        for (geo_bounds, mut groups) in stack_iter {
+            .map(|raster| (raster.bounds, raster.bands));
+        let (mut stack_geo_bounds, mut stack_bands) = stack_iter.next().unwrap();
+        for (geo_bounds, mut bands) in stack_iter {
             stack_geo_bounds = stack_geo_bounds.intersection(&geo_bounds)?;
-            stack_groups.append(groups.as_mut());
+            stack_bands.append(&mut bands);
         }
         Ok(Raster {
             bounds: stack_geo_bounds,
-            groups: stack_groups,
+            bands: stack_bands,
         })
-    }
-
-    fn pixel_bounds(
-        geo_bounds: &GeoBounds,
-        groups_info: Vec<&RasterGroupInfo>,
-    ) -> Result<(PixelBounds, AffineTransform)> {
-        let result_pixel_bounds: Result<Vec<PixelBounds>> = groups_info
-            .into_iter()
-            .map(|group_info| {
-                PixelBounds::try_from(geo_bounds.geometry.affine_transform(&group_info.transform))
-            })
-            .collect();
-        let mut pixel_bounds = result_pixel_bounds?;
-        let mut raster_pixel_shape = pixel_bounds.pop().unwrap().max().x_y();
-        for pixel_shape in pixel_bounds.into_iter().map(|bounds| bounds.max().x_y()) {
-            raster_pixel_shape = (
-                raster_pixel_shape.0.lcm(&pixel_shape.0),
-                raster_pixel_shape.1.lcm(&pixel_shape.1),
-            )
-        }
-        let transform = AffineTransform::new(
-            geo_bounds.geometry.width() / (raster_pixel_shape.0 as f64),
-            0.,
-            geo_bounds.geometry.min().x,
-            0.,
-            geo_bounds.geometry.height() / (raster_pixel_shape.1 as f64),
-            geo_bounds.geometry.min().y,
-        );
-        Ok((Rect::new((0, 0), raster_pixel_shape).try_into()?, transform))
     }
 
     pub fn view(
@@ -197,33 +206,32 @@ impl<T: DataType> Raster<T> {
         if let Some(geo_bounds) = bounds {
             view_geo_bounds = view_geo_bounds.intersection(&geo_bounds)?
         }
-        let mut view_band_idx = band_indexes.0.into_iter();
-        if drop {
-            let mut non_dropped_indxs = Vec::from_iter(0..self.groups.num_bands());
-            let sorted_indexes = view_band_idx.sorted().enumerate();
-            for (shift, idx) in sorted_indexes {
-                non_dropped_indxs.remove(idx - shift);
-            }
-            view_band_idx = non_dropped_indxs.into_iter()
-        }
 
-        let view_zipped: Vec<(usize, &RasterBand<T>)> = view_band_idx
+        let view_band_idx = band_indexes.into_iter(self.bands.num_bands(), drop);
+
+        let view_zipped_bands: Vec<(usize, &RasterBand<T>)> = view_band_idx
             .into_iter()
-            .map(|idx| self.groups.group_indexed_raster_bands()[idx])
+            .map(|idx| self.bands.zipped()[idx])
             .collect();
-        let view_group_infos = view_zipped
+
+        let view_group_ids: HashSet<usize> = view_zipped_bands
             .iter()
-            .map(|(group_index, _)| &self.groups[*group_index].info)
+            .map(|(group_idx, _)| *group_idx)
             .collect();
-        let (view_pixel_bounds, pix_geo_transform) =
-            Self::pixel_bounds(&view_geo_bounds, view_group_infos)?;
-        let bands = view_zipped
+        let view_transforms = view_group_ids
+            .into_iter()
+            .map(|idx| &self.bands.group(idx).info.transform);
+
+        let view_pixel_space = PixelSapce::from(&view_geo_bounds, view_transforms)?;
+        let bands = view_zipped_bands
             .into_iter()
             .map(|(group_idx, raster_band)| {
-                let transform = pix_geo_transform.compose(&self.groups[group_idx].info.transform);
+                let transform = view_pixel_space
+                    .transform
+                    .compose(&self.bands.group(group_idx).info.transform);
                 ViewBand::from((transform, raster_band))
             })
             .collect();
-        Ok(RasterView::new(view_pixel_bounds, bands))
+        Ok(RasterView::new(view_pixel_space.bounds, bands))
     }
 }

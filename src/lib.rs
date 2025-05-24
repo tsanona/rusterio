@@ -107,31 +107,22 @@ fn cast_tuple<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)>
 #[macro_use]
 extern crate shrinkwraprs;
 
-#[derive(Shrinkwrap)]
 pub struct Indexes(Vec<usize>);
 
-/* impl Indexes {
-    fn select_in<I: Index<usize>>(self, indexable: I, size: usize, drop: bool) -> impl Iterator<Item = I::Output>
-    where I::Output: Sized + 'static
-    {
-         let mut idxs = self.0.into_iter();
+impl Indexes {
+    fn into_iter(self, max: usize, drop: bool) -> impl Iterator<Item = usize> {
+        let mut view_band_idx = self.0.into_iter();
         if drop {
-            let mut non_dropped_indxs = Vec::from_iter(0..size);
-            let sorted_indexes = idxs.sorted().enumerate();
+            let mut non_dropped_indxs = Vec::from_iter(0..max);
+            let sorted_indexes = view_band_idx.sorted().enumerate();
             for (shift, idx) in sorted_indexes {
                 non_dropped_indxs.remove(idx - shift);
             }
-            idxs = non_dropped_indxs.into_iter()
+            view_band_idx = non_dropped_indxs.into_iter()
         }
-        idxs.map(|idx| indexable[idx])
+        view_band_idx
     }
-} */
-
-/* impl From<&'static [usize]> for Indexes {
-    fn from(value: &'static [usize]) -> Self {
-        Indexes(value.to_vec())
-    }
-} */
+}
 
 impl<const N: usize> From<[usize; N]> for Indexes {
     fn from(value: [usize; N]) -> Self {
@@ -141,7 +132,7 @@ impl<const N: usize> From<[usize; N]> for Indexes {
 
 impl From<std::ops::Range<usize>> for Indexes {
     fn from(value: std::ops::Range<usize>) -> Self {
-        Indexes(value.into_iter().collect_vec())
+        Indexes(value.collect())
     }
 }
 
