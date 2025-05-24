@@ -1,12 +1,8 @@
-use gdal::raster::GdalType;
 use ndarray::{Array2, ArrayView2};
-use num::Num;
 
-use crate::errors::Result;
+use crate::{components::DataType, errors::Result};
 
-pub trait BandReader<T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>:
-    Send + Sync
-{
+pub trait BandReader<T: DataType>: Send + Sync + std::fmt::Debug {
     fn read_window_as_array(
         &self,
         // Position of bottom left corner.

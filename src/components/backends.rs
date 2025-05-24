@@ -2,21 +2,22 @@ use geo::AffineTransform;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{Band, BandReader, File},
-    errors::Result,
+    components::{raster::RasterBand, BandReader, File},
+    errors::{Result, RusterioError},
 };
 
+/// Implementations for gdal
 pub mod gdal_backend {
     use super::*;
     use gdal::{
-        errors::Result as GdalResult, raster::GdalType, Dataset as GdalDataset,
-        Metadata as GdalMetadata, MetadataEntry as GdalMetadataEntry,
+        raster::GdalType, Dataset as GdalDataset, Metadata as GdalMetadata,
+        MetadataEntry as GdalMetadataEntry,
     };
     use ndarray::{Array2, ArrayView2};
     use num::Num;
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
-    use crate::errors::RusterioError;
+    pub trait DataType = Num + From<bool> + Clone + Copy + Send + Sync + Debug + GdalType;
 
     fn affine_from_gdal(gdal_transform: [f64; 6]) -> AffineTransform {
         AffineTransform::new(
@@ -66,33 +67,32 @@ pub mod gdal_backend {
         fn transform(&self) -> Result<AffineTransform> {
             Ok(affine_from_gdal(self.dataset.geo_transform()?))
         }
-        fn bands(&self) -> Result<Vec<Band>> {
-            let mut bands = Vec::new();
-            for raster_band in self.dataset.rasterbands().collect::<GdalResult<Vec<_>>>()? {
-                let metadata = filter_metadata_gdal(&raster_band);
-                let name = raster_band.description()?;
-                let data_type = raster_band.band_type().name();
-                //let metadata = filter_metadata_gdal(&raster_band_result?);
-                bands.push(Band::new(name, metadata, data_type));
-            }
-            Ok(bands)
+        fn num_bands(&self) -> usize {
+            self.dataset.raster_count()
+        }
+        fn band<T: DataType>(&self, index: usize) -> Result<RasterBand<T>> {
+            let raster_band = self.dataset.rasterband(index + 1)?;
+            let description = raster_band.description()?;
+            let mut metadata = filter_metadata_gdal(&raster_band);
+            let name = metadata.remove("BANDNAME").unwrap(); // TODO: this is sentinel2 data specific... generalize!
+            Ok(RasterBand::new(
+                description,
+                name,
+                metadata,
+                Arc::new(Box::new(GdalReader(self.path.clone(), index + 1))),
+            ))
         }
         fn metadata(&self) -> HashMap<String, String> {
             filter_metadata_gdal(&self.dataset)
         }
-        fn band_reader<'reader, T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync>(
-            &self,
-            band_index: usize,
-        ) -> impl BandReader<T> + 'reader {
-            GdalReader(self.path.to_path_buf(), band_index)
-        }
     }
 
+    #[derive(Debug)]
     struct GdalReader(PathBuf, usize);
 
-    impl<T> BandReader<T> for GdalReader
+    impl<T: DataType> BandReader<T> for GdalReader
     where
-        T: GdalType + Num + From<bool> + Clone + Copy + Send + Sync,
+        T: DataType,
     {
         fn read_window_as_array(
             &self,
@@ -111,7 +111,7 @@ pub mod gdal_backend {
                 array = Array2::ones(size);
             }
             let dataset = GdalDataset::open(&self.0)?;
-            let rasterband = dataset.rasterband(&self.1 + 1)?;
+            let rasterband = dataset.rasterband(self.1)?;
             if T::gdal_ordinal() != rasterband.band_type() as u32 {
                 Err(gdal::errors::GdalError::BadArgument(
                     "result array type must match band data types".to_string(),
@@ -133,27 +133,6 @@ pub mod gdal_backend {
             index: (usize, usize),
             band_index: usize,
             mask: &Option<ArrayView2<'a, bool>>,
-        ) -> Result<Array2<T>> {
-            let dataset = GdalDataset::open(&self.0)?;
-            let rasterband = dataset.rasterband(band_index + 1)?;
-            if T::gdal_ordinal() != rasterband.band_type() as u32 {
-                Err(gdal::errors::GdalError::BadArgument("result array type must match band data types".to_string()))?
-            }
-            let array;
-            if let Some(mask) = mask {
-                if mask.mapv(i8::from).sum().eq(&0) {
-                    return Ok(Array2::zeros(rasterband.block_size()));
-                } else {
-                    array = mask.mapv(T::from)
-                }
-            } else {
-                array = Array2::ones(rasterband.block_size());
-            }
-            let buffer = rasterband.read_block::<T>(index)?;
-            let buf_size = buffer.shape();
-            Array2::from_shape_vec((buf_size.1, buf_size.0), buffer.data().to_vec())
-                .map_err(RusterioError::NdarrayError)
-                .map(|read| array * read)
-        } */
+        ) -> Result<Array2<T>>  */
     }
 }
