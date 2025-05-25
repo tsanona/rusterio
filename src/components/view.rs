@@ -1,5 +1,4 @@
 use geo::AffineTransform;
-use geo_traits::CoordTrait;
 use ndarray::{parallel::prelude::*, s, Array2, Array3, Axis};
 use std::fmt::Debug;
 
@@ -81,30 +80,25 @@ where
             .axis_iter_mut(Axis(0))
             .into_par_iter()
             .zip(&self.bands)
-            .map(|(mut arr_axis, band)| {
+            .map(|(mut arr_band, band)| {
                 let band_bounds = self.bounds.affine_transform(&band.transform)?;
-                let band_shape = band_bounds.shape();
-                //dbg!(self.cield_side_ratio(&band_bounds));
-                if self.bounds.shape().eq(&band_shape) {
-                    arr_axis.assign(&band.read(band_bounds)?);
-                    Ok(())
-                } else {
-                    // TODO: optimize for memory!
-                    let inv_transform = band.transform.inverse().unwrap();
-                    let (band_ratio_x, band_ratio_y) = (
-                        inv_transform.a().abs() as usize,
-                        inv_transform.e().abs() as usize,
-                    );
-                    let mut read_array =
-                        Array2::zeros((band_ratio_x * band_shape.0, band_ratio_y * band_shape.1));
-                    let _: () = band
-                        .read(band_bounds)?
-                        .into_iter()
-                        .zip(read_array.exact_chunks_mut((band_ratio_x, band_ratio_y)))
-                        .map(|(val, mut slice)| slice.fill(val))
-                        .collect();
-                    let (x, y) = arr_axis.dim();
-                    Ok(arr_axis.assign(&read_array.slice(s![read_array.dim().y() - y.., ..x])))
+                match band_bounds.shape() {
+                    (1, 1) => Ok(arr_band.fill(band.read(band_bounds)?[[0, 0]])),
+                    shape if shape.eq(&self.bounds.shape()) => Ok(arr_band.assign(&band.read(band_bounds)?)),
+                    (band_x, band_y) => {
+                        let inv_transform = band.transform.inverse().unwrap();
+                        let (band_ratio_x, band_ratio_y) = (
+                            inv_transform.a().abs() as usize,
+                            inv_transform.e().abs() as usize,
+                        );
+                        let (arr_band_x, arr_band_y) = arr_band.dim();
+                        Ok(band.read(band_bounds)?.into_iter().enumerate().map(|(idx, val)| {
+                            let (x, y) = (band_x - idx % band_x, band_y - idx / band_y);
+                            let x_slice = ((x - 1) * band_ratio_x)..(x * band_ratio_x).min(arr_band_x);
+                            let y_slice = ((y - 1) * band_ratio_y)..(y * band_ratio_y).min(arr_band_y);
+                            arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
+                        }).collect())
+                    }
                 }
             })
             .collect();
