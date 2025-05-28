@@ -10,7 +10,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ViewBand<'a, T: DataType> {
-    /// Transform from [RasterView] bounds pixel space to band pixel space
+    /// Transform from [RasterView] bounds pixel space to band pixel space.
     transform: AffineTransform,
     raster_band: &'a RasterBand<T>,
 }
