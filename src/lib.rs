@@ -144,7 +144,7 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    fn play_ground() {
+    fn working() {
         let mut sentinel_rasters = Vec::new();
         let band_indexes = [
             (Indexes::from([]), true),
@@ -172,5 +172,14 @@ mod tests {
             .unwrap();
         println!("{:?}", &arr);
         ndarray_npy::write_npy("dev/test.npy", &arr.t()).unwrap()
+    }
+
+    #[rstest]
+    fn play_ground() {
+        let sentinel_raster = gdal_backend::open(
+            "data/S2B_MSIL2A_20241206T093309_N0511_R136_T33PTM_20241206T115919.SAFE.zip",
+        )
+        .unwrap();
+        println!("{:#?}", sentinel_raster);
     }
 }

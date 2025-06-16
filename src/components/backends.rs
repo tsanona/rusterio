@@ -4,6 +4,7 @@ use std::{collections::HashMap, fmt::Debug, path::Path};
 use crate::{
     components::{raster::RasterBand, BandReader, File},
     errors::{Result, RusterioError},
+    Indexes, Raster,
 };
 
 /// Implementations for gdal
@@ -17,7 +18,8 @@ pub mod gdal_backend {
     use num::Num;
     use std::{path::PathBuf, sync::Arc};
 
-    pub trait DataType = Num + From<bool> + Clone + Copy + Send + Sync + Debug + GdalType;
+    pub trait DataType: Num + From<bool> + Clone + Copy + Send + Sync + Debug + GdalType {}
+    impl DataType for u16 {}
 
     fn affine_from_gdal(gdal_transform: [f64; 6]) -> AffineTransform {
         AffineTransform::new(
@@ -40,6 +42,36 @@ pub mod gdal_backend {
                 }
             })
             .collect()
+    }
+
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Raster<impl DataType>> {
+        let dataset = GdalDataset::open(&path)?;
+        match dataset.driver().short_name().as_str() {
+            "SENTINEL2" => {
+                let sub_dataset_paths = (1..=3)
+                    .into_iter()
+                    .map(|sub_dataset_idx| {
+                        // Items should exist always(?)
+                        let path = dataset
+                            .metadata_item(
+                                format!("SUBDATASET_{sub_dataset_idx}_NAME").as_str(),
+                                "SUBDATASETS",
+                            )
+                            .unwrap();
+                        GdalFile::open(path).unwrap()
+                    })
+                    .zip([
+                        (Indexes::from([]), true),
+                        (Indexes::from([]), true),
+                        (Indexes::from([0usize, 1]), false),
+                    ])
+                    .map(|(file, (indexes, drop))| {
+                        Raster::<u16>::new(file, indexes, drop).unwrap()
+                    });
+                return Raster::stack(sub_dataset_paths.collect());
+            }
+            _ => unimplemented!(),
+        }
     }
 
     #[derive(Debug)]

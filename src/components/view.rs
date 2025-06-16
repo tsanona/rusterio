@@ -84,7 +84,9 @@ where
                 let band_bounds = self.bounds.affine_transform(&band.transform)?;
                 match band_bounds.shape() {
                     (1, 1) => Ok(arr_band.fill(band.read(band_bounds)?[[0, 0]])),
-                    shape if shape.eq(&self.bounds.shape()) => Ok(arr_band.assign(&band.read(band_bounds)?)),
+                    shape if shape.eq(&self.bounds.shape()) => {
+                        Ok(arr_band.assign(&band.read(band_bounds)?))
+                    }
                     (band_x, band_y) => {
                         let inv_transform = band.transform.inverse().unwrap();
                         let (band_ratio_x, band_ratio_y) = (
@@ -92,12 +94,19 @@ where
                             inv_transform.e().abs() as usize,
                         );
                         let (arr_band_x, arr_band_y) = arr_band.dim();
-                        Ok(band.read(band_bounds)?.into_iter().enumerate().map(|(idx, val)| {
-                            let (x, y) = (band_x - idx % band_x, band_y - idx / band_y);
-                            let x_slice = ((x - 1) * band_ratio_x)..(x * band_ratio_x).min(arr_band_x);
-                            let y_slice = ((y - 1) * band_ratio_y)..(y * band_ratio_y).min(arr_band_y);
-                            arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
-                        }).collect())
+                        Ok(band
+                            .read(band_bounds)?
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, val)| {
+                                let (x, y) = (band_x - idx % band_x, band_y - idx / band_y);
+                                let x_slice =
+                                    ((x - 1) * band_ratio_x)..(x * band_ratio_x).min(arr_band_x);
+                                let y_slice =
+                                    ((y - 1) * band_ratio_y)..(y * band_ratio_y).min(arr_band_y);
+                                arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
+                            })
+                            .collect())
                     }
                 }
             })
