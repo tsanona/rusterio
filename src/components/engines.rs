@@ -1,4 +1,5 @@
 use geo::AffineTransform;
+use num::Num;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
@@ -7,18 +8,26 @@ use crate::{
     Indexes, Raster,
 };
 
+pub trait DataType:
+    Num + From<bool> + Clone + Copy + Send + Sync + Debug + gdal::raster::GdalType
+{
+}
+/*pub trait Engine {
+    type T: DataType;
+    type File: File;
+    type Reader: BandReader;
+}*/
+
 /// Implementations for gdal
-pub mod gdal_backend {
+pub mod gdal_engine {
     use super::*;
     use gdal::{
-        raster::GdalType, Dataset as GdalDataset, Metadata as GdalMetadata,
-        MetadataEntry as GdalMetadataEntry,
+        Dataset as GdalDataset, Metadata as GdalMetadata, MetadataEntry as GdalMetadataEntry,
     };
     use ndarray::{Array2, ArrayView2};
-    use num::Num;
     use std::{path::PathBuf, sync::Arc};
 
-    pub trait DataType: Num + From<bool> + Clone + Copy + Send + Sync + Debug + GdalType {}
+    //pub trait DataType: Num + From<bool> + Clone + Copy + Send + Sync + Debug + GdalType {}
     impl DataType for u16 {}
 
     fn affine_from_gdal(gdal_transform: [f64; 6]) -> AffineTransform {
@@ -44,7 +53,7 @@ pub mod gdal_backend {
             .collect()
     }
 
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Raster<impl DataType>> {
+    pub fn open<T: DataType, P: AsRef<Path>>(path: P) -> Result<Raster<T>> {
         let dataset = GdalDataset::open(&path)?;
         match dataset.driver().short_name().as_str() {
             "SENTINEL2" => {
@@ -52,21 +61,21 @@ pub mod gdal_backend {
                     .into_iter()
                     .map(|sub_dataset_idx| {
                         // Items should exist always(?)
-                        let path = dataset
+                        dataset
                             .metadata_item(
                                 format!("SUBDATASET_{sub_dataset_idx}_NAME").as_str(),
                                 "SUBDATASETS",
                             )
-                            .unwrap();
-                        GdalFile::open(path).unwrap()
+                            .unwrap()
+                        //GdalFile::open(path).unwrap()
                     })
                     .zip([
                         (Indexes::from([]), true),
                         (Indexes::from([]), true),
                         (Indexes::from([0usize, 1]), false),
                     ])
-                    .map(|(file, (indexes, drop))| {
-                        Raster::<u16>::new(file, indexes, drop).unwrap()
+                    .map(|(path, (indexes, drop))| {
+                        Raster::new::<GdalFile, _>(path, indexes, drop).unwrap()
                     });
                 return Raster::stack(sub_dataset_paths.collect());
             }
@@ -122,10 +131,7 @@ pub mod gdal_backend {
     #[derive(Debug)]
     struct GdalReader(PathBuf, usize);
 
-    impl<T: DataType> BandReader<T> for GdalReader
-    where
-        T: DataType,
-    {
+    impl<T: DataType> BandReader<T> for GdalReader {
         fn read_window_as_array(
             &self,
             offset: (usize, usize),

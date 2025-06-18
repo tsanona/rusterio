@@ -1,6 +1,6 @@
 use geo::{AffineOps, AffineTransform, Rect};
 use num::Integer;
-use std::{collections::HashSet, fmt::Debug, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, path::Path, sync::Arc};
 
 use crate::{
     cast_tuple,
@@ -152,8 +152,12 @@ impl<T: DataType> Debug for Raster<T> {
 }
 
 impl<T: DataType> Raster<T> {
-    pub fn new<F: File>(file: F, band_indexes: Indexes, drop: bool) -> Result<Self> {
-        //let file = F::open(path)?;
+    pub fn new<F: File, P: AsRef<Path>>(
+        path: P,
+        band_indexes: Indexes,
+        drop: bool,
+    ) -> Result<Self> {
+        let file = F::open(path)?;
 
         let transform = file.transform()?;
         let pixel_bounds_rect = Rect::new((0., 0.), cast_tuple(file.size())?);

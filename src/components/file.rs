@@ -2,7 +2,7 @@ use geo::AffineTransform;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{raster::RasterBand, DataType},
+    components::{engines::DataType, raster::RasterBand},
     errors::Result,
     Indexes,
 };

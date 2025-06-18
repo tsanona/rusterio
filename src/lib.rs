@@ -6,8 +6,8 @@ mod errors;
 
 use std::fmt::Debug;
 
-pub use backends::gdal_backend;
-pub use components::{backends, BandReader, File, PixelBounds, Raster};
+pub use components::{engines, BandReader, File, PixelBounds, Raster};
+pub use engines::gdal_engine;
 
 extern crate geo_booleanop;
 use geo::{
@@ -139,8 +139,9 @@ impl From<std::ops::Range<usize>> for Indexes {
 #[cfg(test)]
 mod tests {
 
+    use crate::components::engines::gdal_engine::GdalFile;
+
     use super::*;
-    use components::backends::gdal_backend::GdalFile;
     use rstest::rstest;
 
     #[rstest]
@@ -153,8 +154,7 @@ mod tests {
         ];
         for (res, (indexes, drop)) in [10, 20, 60].iter().zip(band_indexes) {
             let raster_path = format!("SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:{res}:EPSG_32633");
-            let file = GdalFile::open(raster_path).unwrap();
-            let raster = Raster::<u16>::new(file, indexes, drop).unwrap();
+            let raster = Raster::<u16>::new::<GdalFile, _>(raster_path, indexes, drop).unwrap();
             println!("{:?}", raster);
             sentinel_rasters.push(raster);
         }
@@ -176,7 +176,7 @@ mod tests {
 
     #[rstest]
     fn play_ground() {
-        let sentinel_raster = gdal_backend::open(
+        let sentinel_raster = gdal_engine::open::<u16, _>(
             "data/S2B_MSIL2A_20241206T093309_N0511_R136_T33PTM_20241206T115919.SAFE.zip",
         )
         .unwrap();
