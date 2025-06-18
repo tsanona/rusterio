@@ -152,7 +152,7 @@ impl<T: DataType> Debug for Raster<T> {
 }
 
 impl<T: DataType> Raster<T> {
-    pub fn new<F: File, P: AsRef<Path>>(
+    pub fn new<F: File<T = T>, P: AsRef<Path>>(
         path: P,
         band_indexes: Indexes,
         drop: bool,
