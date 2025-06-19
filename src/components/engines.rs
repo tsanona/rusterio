@@ -53,11 +53,16 @@ pub mod gdal_engine {
     pub trait GdalDataType: DataType + GdalType {}
     impl GdalDataType for u16 {}
 
+    trait GdalDriver: Debug {
+        fn band_name(raster_band: gdal::raster::RasterBand) -> String;
+        fn open<P: AsRef<Path>>(path: P) -> Result<Raster<impl GdalDataType>>;
+    }
+
     pub fn open<T: GdalDataType, P: AsRef<Path>>(path: P) -> Result<Raster<T>> {
-        let dataset = GdalDataset::open(&path)?;
-        if let Ok(raster) = Raster::new::<GdalFile<T>, _>(path, Indexes::from([]), true) {
+        if let Ok(raster) = Raster::new::<GdalFile<T>, _>(&path, Indexes::from([]), true) {
             return Ok(raster);
         } else {
+            let dataset = GdalDataset::open(&path)?;
             match dataset.driver().short_name().as_str() {
                 // TODO: Probably there is a better way to do this
                 "SENTINEL2" => {
@@ -95,12 +100,12 @@ pub mod gdal_engine {
         dataset: GdalDataset,
     }
 
-    impl<T: GdalDataType> File for GdalFile<T> {
-        type T = T;
+    impl<T: GdalDataType> File<T> for GdalFile<T> {
         fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+            let dataset = GdalDataset::open(&path)?;
             Ok(GdalFile {
                 path: path.as_ref().to_path_buf(),
-                dataset: GdalDataset::open(&path)?,
+                dataset,
                 _t: PhantomData,
             })
         }
@@ -119,11 +124,17 @@ pub mod gdal_engine {
         fn num_bands(&self) -> usize {
             self.dataset.raster_count()
         }
-        fn band(&self, index: usize) -> Result<RasterBand<Self::T>> {
+        fn band(&self, index: usize) -> Result<RasterBand<T>> {
             let raster_band = self.dataset.rasterband(index + 1)?;
             let description = raster_band.description()?;
             let mut metadata = filter_metadata_gdal(&raster_band);
-            let name = metadata.remove("BANDNAME").unwrap(); // TODO: this is sentinel2 data specific... generalize!
+            // TODO: group with open function in engine driver
+            let name = match self.dataset.driver().short_name().as_str() {
+                "SENTINEL2" => {
+                    metadata.remove("BANDNAME").unwrap()
+                }
+                _ => unimplemented!(),
+            };
             Ok(RasterBand {
                 description,
                 name,
