@@ -12,6 +12,8 @@ pub enum RusterioError {
     NdarrayError(#[from] ndarray::ShapeError),
     #[error(transparent)]
     RasterizeError(#[from] geo_rasterize::RasterizeError),
+    #[error(transparent)]
+    GdalEngineError(#[from] crate::components::engines::gdal_engine::GdalEngineError),
     #[error("Ther is no intersection between geometries")]
     NoIntersection,
     #[error("Value could not be cast")]

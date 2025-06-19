@@ -145,7 +145,7 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    fn working() {
+    fn base_use() {
         let mut sentinel_rasters = Vec::new();
         let band_indexes = [
             (Indexes::from([]), true),
@@ -175,9 +175,18 @@ mod tests {
     }
 
     #[rstest]
-    fn play_ground() {
+    fn works_with_full_sentinel2() {
         let sentinel_raster = gdal_engine::open::<u16, _>(
             "data/S2B_MSIL2A_20241206T093309_N0511_R136_T33PTM_20241206T115919.SAFE.zip",
+        )
+        .unwrap();
+        println!("{:#?}", sentinel_raster);
+    }
+
+    #[rstest]
+    fn works_with_partial_sentinel2() {
+        let sentinel_raster = gdal_engine::open::<u16, _>(
+           "SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:10:EPSG_32633",
         )
         .unwrap();
         println!("{:#?}", sentinel_raster);
