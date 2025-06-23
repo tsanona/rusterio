@@ -4,7 +4,7 @@ use std::{fmt::Debug, rc::Rc, sync::Arc};
 
 use crate::{
     cast_tuple,
-    components::{raster::RasterBand, band::BandInfo, DataType, PixelBounds},
+    components::{band::BandInfo, raster::RasterBand, DataType, PixelBounds},
     errors::Result,
     BandReader,
 };
@@ -56,6 +56,14 @@ where
             None,
         )
     }
+
+    fn ratio(&self) -> (usize, usize) {
+        let inv_transform = self.transform.inverse().unwrap();
+        (
+            inv_transform.a().abs() as usize,
+            inv_transform.e().abs() as usize,
+        )
+    }
 }
 
 //#[derive(Clone)]
@@ -100,6 +108,20 @@ where
             .collect()
     }
 
+    fn index_slice(
+        index: usize,
+        bounds: (usize, usize),
+        ratio: (usize, usize),
+        read_max: (usize, usize),
+    ) -> (core::ops::Range<usize>, core::ops::Range<usize>) {
+        let (bounds_x, bounds_y) = bounds;
+        let (ratio_x, ratio_y) = ratio;
+        let (x, y) = (bounds_x - index % bounds_x, bounds_y - index / bounds_y);
+        let x_slice = ((x - 1) * ratio_x)..(x * ratio_x).min(read_max.0);
+        let y_slice = ((y - 1) * ratio_y)..(y * ratio_y).min(read_max.1);
+        (x_slice, y_slice)
+    }
+
     // TODO: add masking
     pub fn read(&self /* , mask: Option<ArrayView2<bool>> */) -> Result<Array3<T>> {
         let mut array = Array3::zeros(self.shape());
@@ -110,28 +132,23 @@ where
             .axis_iter_mut(Axis(0))
             .into_par_iter()
             .zip(read_bands)
-            .map(|(mut arr_band, band)| {
-                let band_bounds = read_bounds.affine_transform(&band.transform)?;
-                match band_bounds.shape() {
-                    (1, 1) => Ok(arr_band.fill(band.read(band_bounds)?[[0, 0]])),
-                    shape if shape.eq(&read_shape) => Ok(arr_band.assign(&band.read(band_bounds)?)),
-                    (band_x, band_y) => {
-                        let inv_transform = &band.transform.inverse().unwrap();
-                        let (band_ratio_x, band_ratio_y) = (
-                            inv_transform.a().abs() as usize,
-                            inv_transform.e().abs() as usize,
-                        );
-                        let (arr_band_x, arr_band_y) = arr_band.dim();
-                        Ok(band
-                            .read(band_bounds)?
+            .map(|(mut arr_band, read_band)| {
+                let read_bounds = read_bounds.affine_transform(&read_band.transform)?;
+                match read_bounds.shape() {
+                    (1, 1) => Ok(arr_band.fill(read_band.read(read_bounds)?[[0, 0]])),
+                    shape if shape.eq(&read_shape) => {
+                        Ok(arr_band.assign(&read_band.read(read_bounds)?))
+                    }
+                    shape => {
+                        let ratio = read_band.ratio();
+                        let read_max: (usize, usize) = arr_band.dim();
+                        Ok(read_band
+                            .read(read_bounds)?
                             .into_iter()
                             .enumerate()
                             .map(|(idx, val)| {
-                                let (x, y) = (band_x - idx % band_x, band_y - idx / band_y);
-                                let x_slice =
-                                    ((x - 1) * band_ratio_x)..(x * band_ratio_x).min(arr_band_x);
-                                let y_slice =
-                                    ((y - 1) * band_ratio_y)..(y * band_ratio_y).min(arr_band_y);
+                                let (x_slice, y_slice) =
+                                    Self::index_slice(idx, shape, ratio, read_max);
                                 arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
                             })
                             .collect())

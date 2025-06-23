@@ -3,7 +3,7 @@ use num::Num;
 use std::{collections::HashMap, fmt::Debug, path::Path, rc::Rc};
 
 use crate::{
-    components::{raster::RasterBand, BandReader, File, Metadata, band::BandInfo},
+    components::{band::BandInfo, raster::RasterBand, BandReader, File, Metadata},
     errors::{Result, RusterioError},
     Indexes, Raster,
 };
