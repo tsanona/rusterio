@@ -1,36 +1,56 @@
 use geo::AffineTransform;
 use ndarray::{parallel::prelude::*, s, Array2, Array3, Axis};
-use std::fmt::Debug;
+use std::{fmt::Debug, rc::Rc, sync::Arc};
 
 use crate::{
     cast_tuple,
-    components::{raster::RasterBand, DataType, PixelBounds},
+    components::{raster::RasterBand, band::BandInfo, DataType, PixelBounds},
     errors::Result,
+    BandReader,
 };
 
 #[derive(Debug, Clone)]
-pub struct ViewBand<'a, T: DataType> {
+pub struct ViewBand<T: DataType> {
     /// Transform from [RasterView] bounds pixel space to band pixel space.
     transform: AffineTransform,
-    raster_band: &'a RasterBand<T>,
+    info: Rc<Box<dyn BandInfo>>,
+    reader: Arc<Box<dyn BandReader<T>>>,
 }
 
-impl<'a, T: DataType> From<(AffineTransform, &'a RasterBand<T>)> for ViewBand<'a, T> {
-    fn from(value: (AffineTransform, &'a RasterBand<T>)) -> Self {
-        let (transform, raster_band) = value;
+impl<T: DataType> From<(AffineTransform, &RasterBand<T>)> for ViewBand<T> {
+    fn from(value: (AffineTransform, &RasterBand<T>)) -> Self {
+        let (transform, RasterBand { info, reader }) = value;
         ViewBand {
             transform,
-            raster_band,
+            info: Rc::clone(info),
+            reader: Arc::clone(reader),
         }
     }
 }
 
-impl<'a, T> ViewBand<'a, T>
+pub struct ParBand<T: DataType> {
+    transform: AffineTransform,
+    reader: Arc<Box<dyn BandReader<T>>>,
+}
+
+impl<T: DataType> From<&ViewBand<T>> for ParBand<T> {
+    fn from(value: &ViewBand<T>) -> Self {
+        let ViewBand {
+            transform, reader, ..
+        } = value;
+        ParBand {
+            transform: *transform,
+            reader: Arc::clone(reader),
+        }
+    }
+}
+
+impl<T> ParBand<T>
 where
     T: DataType,
 {
     fn read(&self, bounds: PixelBounds) -> Result<Array2<T>> {
-        self.raster_band.reader.read_window_as_array(
+        self.reader.read_window_as_array(
             cast_tuple(bounds.min().x_y())?,
             cast_tuple((bounds.width(), bounds.height()))?,
             None,
@@ -38,20 +58,20 @@ where
     }
 }
 
-#[derive(Clone)]
-pub struct RasterView<'a, T: DataType> {
+//#[derive(Clone)]
+pub struct RasterView<T: DataType> {
     /// Shape of array when read.
     bounds: PixelBounds,
-    bands: Vec<ViewBand<'a, T>>,
+    bands: Vec<ViewBand<T>>,
 }
 
-impl<'a, T: DataType> Debug for RasterView<'a, T> {
+impl<T: DataType> Debug for RasterView<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let f = &mut f.debug_struct("RasterView");
-        let bands: Vec<&String> = self
+        let bands: Vec<String> = self
             .bands
             .iter()
-            .map(|view_band| &view_band.raster_band.name)
+            .map(|view_band| view_band.info.name())
             .collect();
         f.field("pixel_shape", &(self.bounds.width(), self.bounds.height()))
             .field("bands", &bands)
@@ -59,11 +79,11 @@ impl<'a, T: DataType> Debug for RasterView<'a, T> {
     }
 }
 
-impl<'a, T> RasterView<'a, T>
+impl<T> RasterView<T>
 where
     T: DataType,
 {
-    pub fn new(bounds: PixelBounds, bands: Vec<ViewBand<'a, T>>) -> Self {
+    pub fn new(bounds: PixelBounds, bands: Vec<ViewBand<T>>) -> Self {
         Self { bounds, bands }
     }
 
@@ -73,22 +93,30 @@ where
         Ok(self)
     }
 
+    fn par_bands(&self) -> Vec<ParBand<T>> {
+        self.bands
+            .iter()
+            .map(|view_band| ParBand::from(view_band))
+            .collect()
+    }
+
     // TODO: add masking
-    pub fn read(&self /* , mask: Option<ArrayView2<'a, bool>> */) -> Result<Array3<T>> {
+    pub fn read(&self /* , mask: Option<ArrayView2<bool>> */) -> Result<Array3<T>> {
         let mut array = Array3::zeros(self.shape());
+        let read_shape = self.bounds.shape();
+        let read_bounds = &self.bounds;
+        let read_bands = self.par_bands();
         let errors: Result<()> = array
             .axis_iter_mut(Axis(0))
             .into_par_iter()
-            .zip(&self.bands)
+            .zip(read_bands)
             .map(|(mut arr_band, band)| {
-                let band_bounds = self.bounds.affine_transform(&band.transform)?;
+                let band_bounds = read_bounds.affine_transform(&band.transform)?;
                 match band_bounds.shape() {
                     (1, 1) => Ok(arr_band.fill(band.read(band_bounds)?[[0, 0]])),
-                    shape if shape.eq(&self.bounds.shape()) => {
-                        Ok(arr_band.assign(&band.read(band_bounds)?))
-                    }
+                    shape if shape.eq(&read_shape) => Ok(arr_band.assign(&band.read(band_bounds)?)),
                     (band_x, band_y) => {
-                        let inv_transform = band.transform.inverse().unwrap();
+                        let inv_transform = &band.transform.inverse().unwrap();
                         let (band_ratio_x, band_ratio_y) = (
                             inv_transform.a().abs() as usize,
                             inv_transform.e().abs() as usize,

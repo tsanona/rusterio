@@ -1,9 +1,9 @@
 use geo::AffineTransform;
 use num::Num;
-use std::{collections::HashMap, fmt::Debug, path::Path};
+use std::{collections::HashMap, fmt::Debug, path::Path, rc::Rc};
 
 use crate::{
-    components::{raster::RasterBand, BandReader, File},
+    components::{raster::RasterBand, BandReader, File, Metadata, band::BandInfo},
     errors::{Result, RusterioError},
     Indexes, Raster,
 };
@@ -97,12 +97,12 @@ pub mod gdal_engine {
     pub struct GdalFile<T: GdalDataType> {
         _t: PhantomData<T>,
         path: PathBuf,
-        dataset: GdalDataset,
+        dataset: Rc<GdalDataset>,
     }
 
     impl<T: GdalDataType> File<T> for GdalFile<T> {
         fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-            let dataset = GdalDataset::open(&path)?;
+            let dataset = Rc::new(GdalDataset::open(&path)?);
             Ok(GdalFile {
                 path: path.as_ref().to_path_buf(),
                 dataset,
@@ -110,7 +110,7 @@ pub mod gdal_engine {
             })
         }
         fn description(&self) -> Result<String> {
-            Ok(GdalMetadata::description(&self.dataset)?)
+            Ok(self.dataset.description()?)
         }
         fn size(&self) -> (usize, usize) {
             self.dataset.raster_size()
@@ -124,33 +124,42 @@ pub mod gdal_engine {
         fn num_bands(&self) -> usize {
             self.dataset.raster_count()
         }
-        fn band(&self, index: usize) -> Result<RasterBand<T>> {
-            let raster_band = self.dataset.rasterband(index + 1)?;
-            let description = raster_band.description()?;
-            let mut metadata = filter_metadata_gdal(&raster_band);
-            // TODO: group with open function in engine driver
-            let name = match self.dataset.driver().short_name().as_str() {
-                "SENTINEL2" => {
-                    metadata.remove("BANDNAME").unwrap()
-                }
-                _ => unimplemented!(),
-            };
-            Ok(RasterBand {
-                description,
-                name,
-                metadata,
-                reader: Arc::new(Box::new(GdalReader(self.path.clone(), index + 1))),
-            })
-        }
         fn metadata(&self) -> HashMap<String, String> {
-            filter_metadata_gdal(&self.dataset)
+            filter_metadata_gdal(self.dataset.as_ref())
+        }
+        fn band(&self, index: usize) -> Result<RasterBand<T>> {
+            let info: Rc<Box<dyn BandInfo>> =
+                Rc::new(Box::new(GdalBandInfo(Rc::clone(&self.dataset), index + 1)));
+            let reader: Arc<Box<dyn BandReader<T>>> =
+                Arc::new(Box::new(GdalBandReader(self.path.clone(), index + 1)));
+            Ok(RasterBand { info, reader })
         }
     }
 
     #[derive(Debug)]
-    struct GdalReader(PathBuf, usize);
+    struct GdalBandInfo(Rc<gdal::Dataset>, usize);
 
-    impl<T: GdalDataType> BandReader<T> for GdalReader {
+    impl<'a> BandInfo for GdalBandInfo {
+        fn description(&self) -> Result<String> {
+            Ok(self.0.rasterband(self.1)?.description()?)
+        }
+
+        fn name(&self) -> String {
+            match self.0.driver().short_name().as_str() {
+                "SENTINEL2" => return self.metadata().unwrap().remove("BANDNAME").unwrap(),
+                _ => unimplemented!(),
+            };
+        }
+
+        fn metadata(&self) -> Result<Metadata> {
+            Ok(filter_metadata_gdal(&self.0.rasterband(self.1)?))
+        }
+    }
+
+    #[derive(Debug)]
+    struct GdalBandReader(PathBuf, usize);
+
+    impl<T: GdalDataType> BandReader<T> for GdalBandReader {
         fn read_window_as_array(
             &self,
             offset: (usize, usize),

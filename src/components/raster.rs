@@ -1,10 +1,12 @@
 use geo::{AffineOps, AffineTransform, Rect};
 use num::Integer;
-use std::{collections::HashSet, fmt::Debug, path::Path, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, path::Path, rc::Rc, sync::Arc};
 
 use crate::{
     cast_tuple,
-    components::{view::RasterView, BandReader, DataType, File, GeoBounds, Metadata},
+    components::{
+        band::BandInfo, view::RasterView, BandReader, DataType, File, GeoBounds, Metadata,
+    },
     errors::Result,
     Indexes,
 };
@@ -13,11 +15,7 @@ use super::{view::ViewBand, PixelBounds};
 
 #[derive(Debug)]
 pub struct RasterBand<T: DataType> {
-    pub description: String,
-    pub name: String,
-    pub metadata: Metadata,
-    //chunk_size: (usize, usize),
-    //data_type: String,
+    pub info: Rc<Box<dyn BandInfo>>,
     pub reader: Arc<Box<dyn BandReader<T>>>,
 }
 
@@ -137,7 +135,7 @@ pub struct Raster<T: DataType> {
 impl<T: DataType> Debug for Raster<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let f = &mut f.debug_struct("Raster");
-        let bands: Vec<&String> = self.bands.iter().map(|band| &band.name).collect();
+        let bands: Vec<String> = self.bands.iter().map(|band| band.info.name()).collect();
         let pixel_space = PixelSapce::from(
             &self.bounds,
             self.bands.groups().map(|group| &group.info.transform),
