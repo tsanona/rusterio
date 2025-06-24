@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ViewBand<T: DataType> {
-    /// Transform from [RasterView] bounds pixel space to band pixel space.
+    /// Transform from [RasterView] pixel space to band pixel space.
     transform: AffineTransform,
     info: Rc<Box<dyn BandInfo>>,
     reader: Arc<Box<dyn BandReader<T>>>,

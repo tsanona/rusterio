@@ -128,7 +128,6 @@ pub struct Raster<T: DataType> {
     /// when projected to pixel coordinates (with transform),
     /// `min @ (0, 0)` and `max @ array_size`.
     bounds: GeoBounds,
-    //pixel_bounds: PixelBounds,
     bands: RasterBands<T>,
 }
 

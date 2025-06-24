@@ -41,16 +41,6 @@ impl GeoBounds {
 #[derive(Shrinkwrap, Debug, Clone)]
 pub struct PixelBounds(Rect<usize>);
 
-impl PixelBounds {
-    pub fn new<C: Into<Coord<usize>>>(min: C, max: C) -> Self {
-        Self(Rect::new(min, max))
-    }
-
-    fn cast_coord<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
-        Ok(Coord::from(cast_tuple(coord.x_y())?))
-    }
-}
-
 impl<T: CoordNum> TryFrom<Rect<T>> for PixelBounds {
     type Error = RusterioError;
     fn try_from(value: Rect<T>) -> Result<Self> {
@@ -68,6 +58,14 @@ impl TryFrom<&PixelBounds> for Rect {
 }
 
 impl PixelBounds {
+    pub fn new<C: Into<Coord<usize>>>(min: C, max: C) -> Self {
+        Self(Rect::new(min, max))
+    }
+
+    fn cast_coord<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
+        Ok(Coord::from(cast_tuple(coord.x_y())?))
+    }
+
     pub fn shape(&self) -> (usize, usize) {
         (self.width(), self.height())
     }
