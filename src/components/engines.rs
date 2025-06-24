@@ -191,7 +191,9 @@ pub mod gdal_engine {
             )?;
             Array2::from_shape_vec(size, buffer.data().to_vec())
                 .map_err(RusterioError::NdarrayError)
-                .map(|read| array * read)
+                // Array2 shape is (rows, cols) and Buffer shape is (cols in x-axis, rows in y-axis)
+                // thus needs T to correct orientation
+                .map(|read| array * read.t())
         }
 
         /* fn read_band_block_as_array(
