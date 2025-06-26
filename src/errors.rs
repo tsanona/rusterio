@@ -14,8 +14,8 @@ pub enum RusterioError {
     RasterizeError(#[from] geo_rasterize::RasterizeError),
     #[error(transparent)]
     GdalEngineError(#[from] crate::components::engines::gdal_engine::GdalEngineError),
-    #[error("Ther is no intersection between geometries")]
-    NoIntersection,
+    #[error(transparent)]
+    GeoBoundsError(#[from] crate::components::bounds::BoundsError),
     #[error("Value could not be cast")]
     Uncastable,
 }

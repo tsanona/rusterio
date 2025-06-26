@@ -6,7 +6,7 @@ mod errors;
 
 use std::fmt::Debug;
 
-pub use components::{engines, BandReader, File, PixelBounds, Raster};
+pub use components::{bounds::ViewBounds, engines, raster::Raster};
 pub use engines::gdal_engine;
 
 extern crate geo_booleanop;
@@ -20,9 +20,10 @@ use itertools::Itertools;
 
 use errors::{Result, RusterioError};
 
-#[derive(Debug, Clone)]
+#[derive(Shrinkwrap, Debug, Clone)]
 pub struct CrsGeometry<G: GeometryTrait> {
     crs: String,
+    #[shrinkwrap(main_field)]
     geometry: G,
 }
 
@@ -111,16 +112,24 @@ pub struct Indexes(Vec<usize>);
 
 impl Indexes {
     fn into_iter(self, max: usize, drop: bool) -> impl Iterator<Item = usize> {
-        let mut view_band_idx = self.0.into_iter();
+        let indexes = self.0.into_iter();
         if drop {
+            let sorted_indexes = indexes.sorted().enumerate();
             let mut non_dropped_indxs = Vec::from_iter(0..max);
-            let sorted_indexes = view_band_idx.sorted().enumerate();
             for (shift, idx) in sorted_indexes {
                 non_dropped_indxs.remove(idx - shift);
             }
-            view_band_idx = non_dropped_indxs.into_iter()
+            non_dropped_indxs.into_iter()
+        } else {
+            indexes
         }
-        view_band_idx
+    }
+
+    fn select_from<I: Clone + Copy>(self, collection: Vec<I>, drop: bool) -> Vec<I> {
+        self.into_iter(collection.len(), drop)
+            .into_iter()
+            .map(|idx| collection[idx])
+            .collect()
     }
 }
 
@@ -139,7 +148,7 @@ impl From<std::ops::Range<usize>> for Indexes {
 #[cfg(test)]
 mod tests {
 
-    use crate::components::engines::gdal_engine::GdalFile;
+    use crate::components::{bounds::ViewBounds, engines::gdal_engine::GdalFile};
 
     use super::*;
     use rstest::rstest;
@@ -166,12 +175,12 @@ mod tests {
             .unwrap();
         println!("{:?}", sentinel_view);
         let arr = sentinel_view
-            .clip(PixelBounds::new((0, 0), (1250, 1250)))
+            .clip(ViewBounds::new((0, 0), (1250, 1250)))
             .unwrap()
             .read()
             .unwrap();
         println!("{:?}", &arr);
-        ndarray_npy::write_npy("dev/test.npy", &arr.t()).unwrap()
+        ndarray_npy::write_npy("dev/test.npy", &arr).unwrap()
     }
 
     #[rstest]

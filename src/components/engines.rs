@@ -1,15 +1,16 @@
-use geo::AffineTransform;
-use num::Num;
 use std::{collections::HashMap, fmt::Debug, path::Path, rc::Rc};
 
 use crate::{
-    components::{band::BandInfo, raster::RasterBand, BandReader, File, Metadata},
+    components::{
+        band::{BandInfo, BandReader},
+        file::File,
+        raster::RasterBand,
+        transforms::BandGeoTransform,
+        DataType, Metadata,
+    },
     errors::{Result, RusterioError},
     Indexes, Raster,
 };
-
-pub trait DataType: Num + From<bool> + Clone + Copy + Send + Sync + Debug {}
-impl DataType for u16 {}
 
 /// Implementations for gdal
 pub mod gdal_engine {
@@ -20,17 +21,6 @@ pub mod gdal_engine {
     };
     use ndarray::{Array2, ArrayView2};
     use std::{marker::PhantomData, path::PathBuf, sync::Arc};
-
-    fn affine_from_gdal(gdal_transform: [f64; 6]) -> AffineTransform {
-        AffineTransform::new(
-            gdal_transform[1],
-            gdal_transform[2],
-            gdal_transform[0],
-            gdal_transform[4],
-            gdal_transform[5],
-            gdal_transform[3],
-        )
-    }
 
     fn filter_metadata_gdal(metadata: &impl GdalMetadata) -> HashMap<String, String> {
         GdalMetadata::metadata(metadata)
@@ -118,8 +108,17 @@ pub mod gdal_engine {
         fn crs(&self) -> String {
             self.dataset.projection()
         }
-        fn transform(&self) -> Result<AffineTransform> {
-            Ok(affine_from_gdal(self.dataset.geo_transform()?))
+        fn transform(&self) -> Result<BandGeoTransform> {
+            let gdal_transform = self.dataset.geo_transform()?;
+            Ok(BandGeoTransform::new(
+                gdal_transform[1],
+                gdal_transform[2],
+                gdal_transform[0],
+                gdal_transform[4],
+                gdal_transform[5],
+                gdal_transform[3],
+                self.crs(),
+            ))
         }
         fn num_bands(&self) -> usize {
             self.dataset.raster_count()
@@ -174,7 +173,7 @@ pub mod gdal_engine {
                     array = mask.mapv(T::from)
                 }
             } else {
-                array = Array2::ones(size);
+                array = Array2::ones((size.1, size.0));
             }
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(self.1)?;
@@ -184,7 +183,7 @@ pub mod gdal_engine {
                 ))?
             }
             let buffer = rasterband.read_as::<T>(
-                (offset.0 as isize, offset.1 as isize),
+                (offset.1 as isize, offset.0 as isize),
                 size,
                 size,
                 None,

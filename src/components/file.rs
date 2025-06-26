@@ -1,8 +1,7 @@
-use geo::AffineTransform;
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{engines::DataType, raster::RasterBand},
+    components::{raster::RasterBand, transforms::BandGeoTransform, DataType},
     errors::Result,
     Indexes,
 };
@@ -12,7 +11,7 @@ pub trait File<T: DataType>: Debug + Sized {
     fn description(&self) -> Result<String>;
     fn size(&self) -> (usize, usize);
     fn crs(&self) -> String;
-    fn transform(&self) -> Result<AffineTransform>;
+    fn transform(&self) -> Result<BandGeoTransform>;
     fn num_bands(&self) -> usize;
     fn band(&self, index: usize) -> Result<RasterBand<T>>;
     fn bands(&self, indexes: Indexes, drop: bool) -> Result<Vec<RasterBand<T>>> {

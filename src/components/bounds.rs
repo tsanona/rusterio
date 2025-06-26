@@ -1,9 +1,16 @@
 use crate::{
     cast_tuple,
-    errors::{Result, RusterioError},
+    components::transforms::{GeoBandTransform, ViewBandTransform},
+    errors::Result,
     CrsGeometry,
 };
-use geo::{AffineOps, AffineTransform, Coord, CoordNum, Intersects, MapCoords, Rect};
+use geo::{AffineOps, Coord, CoordNum, Intersects, MapCoords, Rect};
+
+#[derive(thiserror::Error, Debug)]
+pub enum BoundsError {
+    #[error("Ther is no intersection between geometries")]
+    NoIntersection,
+}
 
 /// Bounds in geo space.
 #[derive(Shrinkwrap, Clone)]
@@ -24,7 +31,7 @@ impl From<(String, Rect)> for GeoBounds {
 
 impl GeoBounds {
     pub fn shape(&self) -> (f64, f64) {
-        (self.0.geometry.width(), self.0.geometry.width())
+        (self.0.geometry.height(), self.0.geometry.width())
     }
 
     pub fn intersection(&self, rhs: &GeoBounds) -> Result<GeoBounds> {
@@ -32,67 +39,73 @@ impl GeoBounds {
             .0
             .intersection(&rhs.0)?
             .bounding_rect()
-            .ok_or(RusterioError::NoIntersection)?
+            .ok_or(BoundsError::NoIntersection)?
             .into())
     }
 }
 
-/// Bounds in pixel space.
-#[derive(Shrinkwrap, Debug, Clone)]
-pub struct PixelBounds(Rect<usize>);
+#[derive(Debug)]
+pub struct ViewBounds(Rect<usize>);
 
-impl<T: CoordNum> TryFrom<Rect<T>> for PixelBounds {
-    type Error = RusterioError;
-    fn try_from(value: Rect<T>) -> Result<Self> {
-        let cast_rect: Rect<usize> = value.try_map_coords(Self::cast_coord)?;
-        Ok(Self(cast_rect))
+impl ViewBounds {
+    pub fn new(offset: (usize, usize), shape: (usize, usize)) -> Self {
+        Self(Rect::new(offset, shape))
     }
-}
-
-impl TryFrom<&PixelBounds> for Rect {
-    type Error = RusterioError;
-    fn try_from(value: &PixelBounds) -> Result<Rect> {
-        let cast_rect: Rect = value.try_map_coords(PixelBounds::cast_coord)?;
-        Ok(cast_rect)
+    pub fn shape(&self) -> (usize, usize) {
+        (self.0.height(), self.0.width())
     }
-}
 
-impl PixelBounds {
-    pub fn new<C: Into<Coord<usize>>>(min: C, max: C) -> Self {
-        Self(Rect::new(min, max))
+    pub fn max(&self) -> Coord<usize> {
+        self.0.min() + self.0.max()
+    }
+
+    pub fn intersection(&self, rhs: &Self) -> std::result::Result<Self, BoundsError> {
+        if self.0.intersects(&rhs.0) {
+            let (self_max_x, self_max_y) = self.max().x_y();
+            let (rhs_max_x, rhs_max_y) = rhs.max().x_y();
+            let max = (self_max_x.min(rhs_max_x), self_max_y.min(rhs_max_y));
+
+            let (self_min_x, self_min_y) = self.0.min().x_y();
+            let (rhs_min_x, rhs_min_y) = rhs.0.min().x_y();
+            let min = (self_min_x.max(rhs_min_x), self_min_y.max(rhs_min_y));
+
+            return Ok(Self(Rect::new(min, max)));
+        }
+        Err(BoundsError::NoIntersection)
+    }
+
+    pub fn to_read_bounds(&self, transform: ViewBandTransform) -> Result<ReadBounds> {
+        let bounds: Rect = self.0.try_map_coords(Self::cast_coord)?;
+        let bounds: Rect<usize> = bounds
+            .affine_transform(&transform)
+            .try_map_coords(Self::cast_coord)?;
+        Ok(ReadBounds(bounds))
     }
 
     fn cast_coord<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
         Ok(Coord::from(cast_tuple(coord.x_y())?))
     }
+}
 
-    pub fn shape(&self) -> (usize, usize) {
-        (self.width(), self.height())
-    }
+pub struct ReadBounds(Rect<usize>);
 
-    pub fn affine_transform(&self, transform: &AffineTransform) -> Result<Self> {
-        let transformed_bounds = Rect::try_from(self)?.affine_transform(transform);
-        let max = transformed_bounds.max().x_y();
-        let min = transformed_bounds.min().x_y();
-        //let transformed_bounds = transformed_bounds.map_coords(|Coord { x, y }| Coord::from((x.ceil(), y.floor())));
-        Self::try_from(Rect::new(
-            (min.0.floor(), min.1.floor()),
-            (max.0.ceil(), max.1.ceil()),
+impl ReadBounds {
+    pub fn new(bounds: &GeoBounds, transform: &GeoBandTransform) -> Result<Self> {
+        Ok(Self(
+            bounds
+                .affine_transform(transform)
+                .try_map_coords(Self::cast_coord)?,
         ))
     }
 
-    pub fn intersection(&self, rhs: &PixelBounds) -> Result<PixelBounds> {
-        if self.intersects(&rhs.0) {
-            let (self_max_x, self_max_y) = self.max().x_y();
-            let (rhs_max_x, rhs_max_y) = rhs.max().x_y();
-            let max = (self_max_x.min(rhs_max_x), self_max_y.min(rhs_max_y));
+    pub fn offset(&self) -> (usize, usize) {
+        self.0.min().x_y()
+    }
 
-            let (self_min_x, self_min_y) = self.min().x_y();
-            let (rhs_min_x, rhs_min_y) = rhs.min().x_y();
-            let min = (self_min_x.max(rhs_min_x), self_min_y.max(rhs_min_y));
-
-            return Ok(PixelBounds(Rect::new(min, max)));
-        }
-        Err(RusterioError::NoIntersection)
+    pub fn shape(&self) -> (usize, usize) {
+        (self.0.height(), self.0.width())
+    }
+    fn cast_coord<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
+        Ok(Coord::from(cast_tuple(coord.x_y())?))
     }
 }
