@@ -14,9 +14,9 @@ pub trait File<T: DataType>: Debug + Sized {
     fn transform(&self) -> Result<BandGeoTransform>;
     fn num_bands(&self) -> usize;
     fn band(&self, index: usize) -> Result<RasterBand<T>>;
-    fn bands(&self, indexes: Indexes, drop: bool) -> Result<Vec<RasterBand<T>>> {
+    fn bands(&self, indexes: Indexes) -> Result<Vec<RasterBand<T>>> {
         indexes
-            .into_iter(self.num_bands(), drop)
+            .into_iter(self.num_bands())
             .map(|idx| self.band(idx))
             .collect()
     }

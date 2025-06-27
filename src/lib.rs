@@ -1,12 +1,15 @@
 #![allow(dead_code)]
 #![feature(trait_alias)]
 
+#[macro_use]
+extern crate shrinkwraprs;
+
 mod components;
 mod errors;
 
 use std::fmt::Debug;
 
-pub use components::{bounds::ViewBounds, engines, raster::Raster};
+pub use components::{bounds::ViewBounds, engines, raster::Raster, DataType};
 pub use engines::gdal_engine;
 
 extern crate geo_booleanop;
@@ -105,15 +108,12 @@ fn cast_tuple<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)>
     Ok((cast(tuple.0)?, cast(tuple.1)?))
 }
 
-#[macro_use]
-extern crate shrinkwraprs;
-
-pub struct Indexes(Vec<usize>);
+pub struct Indexes(Vec<usize>, bool);
 
 impl Indexes {
-    fn into_iter(self, max: usize, drop: bool) -> impl Iterator<Item = usize> {
+    fn into_iter(self, max: usize) -> impl Iterator<Item = usize> {
         let indexes = self.0.into_iter();
-        if drop {
+        if self.1 {
             let sorted_indexes = indexes.sorted().enumerate();
             let mut non_dropped_indxs = Vec::from_iter(0..max);
             for (shift, idx) in sorted_indexes {
@@ -125,23 +125,39 @@ impl Indexes {
         }
     }
 
-    fn select_from<I: Clone + Copy>(self, collection: Vec<I>, drop: bool) -> Vec<I> {
-        self.into_iter(collection.len(), drop)
-            .into_iter()
+    fn select_from<I: Clone + Copy>(self, collection: Vec<I>) -> Vec<I> {
+        self.into_iter(collection.len())
             .map(|idx| collection[idx])
             .collect()
+    }
+
+    pub fn all() -> Self {
+        Self(Vec::with_capacity(0), true)
+    }
+
+}
+
+impl<const N: usize> From<([usize; N], bool)> for Indexes {
+    fn from(value: ([usize; N], bool)) -> Self {
+        Indexes(value.0.to_vec(), value.1)
+    }
+}
+
+impl From<(std::ops::Range<usize>, bool)> for Indexes {
+    fn from(value: (std::ops::Range<usize>, bool)) -> Self {
+        Indexes(value.0.collect(), value.1)
     }
 }
 
 impl<const N: usize> From<[usize; N]> for Indexes {
     fn from(value: [usize; N]) -> Self {
-        Indexes(value.to_vec())
+        Indexes(value.to_vec(), false)
     }
 }
 
 impl From<std::ops::Range<usize>> for Indexes {
     fn from(value: std::ops::Range<usize>) -> Self {
-        Indexes(value.collect())
+        Indexes(value.collect(), false)
     }
 }
 
@@ -157,13 +173,13 @@ mod tests {
     fn base_use() {
         let mut sentinel_rasters = Vec::new();
         let band_indexes = [
-            (Indexes::from([]), true),
-            (Indexes::from(0usize..6), false),
-            (Indexes::from([0usize, 1]), false),
+            (Indexes::from(([], true))),
+            (Indexes::from((0usize..6, false))),
+            (Indexes::from(([0usize, 1], false))),
         ];
-        for (res, (indexes, drop)) in [10, 20, 60].iter().zip(band_indexes) {
+        for (res, indexes) in [10, 20, 60].iter().zip(band_indexes) {
             let raster_path = format!("SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:{res}:EPSG_32633");
-            let raster = Raster::new::<GdalFile<u16>, _>(raster_path, indexes, drop).unwrap();
+            let raster = Raster::new::<GdalFile<u16>, _>(raster_path, indexes).unwrap();
             println!("{:?}", raster);
             sentinel_rasters.push(raster);
         }
@@ -171,7 +187,7 @@ mod tests {
         let sentinel_raster = Raster::stack(sentinel_rasters).unwrap();
         println!("{:?}", sentinel_raster);
         let sentinel_view = sentinel_raster
-            .view(None, Indexes::from([0, 1, 2]), false)
+            .view(None, Indexes::from([0, 1, 2]))
             .unwrap();
         println!("{:?}", sentinel_view);
         let arr = sentinel_view

@@ -49,7 +49,7 @@ pub mod gdal_engine {
     }
 
     pub fn open<T: GdalDataType, P: AsRef<Path>>(path: P) -> Result<Raster<T>> {
-        if let Ok(raster) = Raster::new::<GdalFile<T>, _>(&path, Indexes::from([]), true) {
+        if let Ok(raster) = Raster::new::<GdalFile<T>, _>(&path, Indexes::all()) {
             return Ok(raster);
         } else {
             let dataset = GdalDataset::open(&path)?;
@@ -68,12 +68,12 @@ pub mod gdal_engine {
                                 .unwrap()
                         })
                         .zip([
-                            (Indexes::from([]), true),
-                            (Indexes::from([]), true),
-                            (Indexes::from([0usize, 1]), false),
+                            (Indexes::all()),
+                            (Indexes::all()),
+                            (Indexes::from([0usize, 1])),
                         ])
-                        .map(|(path, (indexes, drop))| {
-                            Raster::new::<GdalFile<T>, _>(path, indexes, drop)
+                        .map(|(path, indexes)| {
+                            Raster::new::<GdalFile<T>, _>(path, indexes)
                         })
                         .collect::<Result<Vec<_>>>()?;
                     return Raster::stack(sub_dataset_paths);
