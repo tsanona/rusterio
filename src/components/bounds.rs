@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::{
     cast_tuple,
     components::transforms::{GeoBandTransform, ViewBandTransform},
@@ -22,10 +24,10 @@ impl From<CrsGeometry<Rect>> for GeoBounds {
     }
 }
 
-impl From<(String, Rect)> for GeoBounds {
-    fn from(value: (String, Rect)) -> Self {
+impl From<(Rc<str>, Rect)> for GeoBounds {
+    fn from(value: (Rc<str>, Rect)) -> Self {
         let (crs, geometry) = value;
-        CrsGeometry { crs, geometry }.into()
+        Self(CrsGeometry { crs, geometry })
     }
 }
 
@@ -35,12 +37,12 @@ impl GeoBounds {
     }
 
     pub fn intersection(&self, rhs: &GeoBounds) -> Result<GeoBounds> {
-        Ok(self
+        Ok(GeoBounds(self
             .0
             .intersection(&rhs.0)?
             .bounding_rect()
             .ok_or(BoundsError::NoIntersection)?
-            .into())
+            ))
     }
 }
 

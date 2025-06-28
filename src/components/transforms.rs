@@ -1,9 +1,10 @@
 use geo::AffineTransform;
+use std::rc::Rc;
 
 use crate::components::bounds::GeoBounds;
 
 #[derive(Shrinkwrap, Debug)]
-pub struct ViewGeoTransform(#[shrinkwrap(main_field)] AffineTransform, String);
+pub struct ViewGeoTransform(#[shrinkwrap(main_field)] AffineTransform, Rc<str>);
 
 impl ViewGeoTransform {
     pub fn new(bounds: &GeoBounds, view_shape: (usize, usize)) -> Self {
@@ -15,29 +16,29 @@ impl ViewGeoTransform {
             bounds.geometry.height() / (view_shape.1 as f64),
             bounds.geometry.min().y,
         );
-        Self(transform, bounds.crs.clone())
+        Self(transform, Rc::clone(&bounds.crs))
     }
 }
 
 #[derive(Shrinkwrap, Debug)]
-pub struct BandGeoTransform(#[shrinkwrap(main_field)] AffineTransform, String);
+pub struct BandGeoTransform(#[shrinkwrap(main_field)] AffineTransform, Rc<str>);
 
 impl BandGeoTransform {
-    pub fn new(a: f64, b: f64, xoff: f64, d: f64, e: f64, yoff: f64, crs: String) -> Self {
+    pub fn new(a: f64, b: f64, xoff: f64, d: f64, e: f64, yoff: f64, crs: Rc<str>) -> Self {
         Self(AffineTransform::new(a, b, xoff, d, e, yoff), crs)
     }
 
     pub fn inverse(&self) -> GeoBandTransform {
-        GeoBandTransform(self.0.inverse().unwrap(), self.1.clone())
+        GeoBandTransform(self.0.inverse().unwrap(), Rc::clone(&self.1))
     }
 }
 
 #[derive(Shrinkwrap, Debug)]
-pub struct GeoBandTransform(#[shrinkwrap(main_field)] AffineTransform, String);
+pub struct GeoBandTransform(#[shrinkwrap(main_field)] AffineTransform, Rc<str>);
 
 impl GeoBandTransform {
     pub fn inverse(&self) -> BandGeoTransform {
-        BandGeoTransform(self.0.inverse().unwrap(), self.1.clone())
+        BandGeoTransform(self.0.inverse().unwrap(), Rc::clone(&self.1))
     }
 }
 

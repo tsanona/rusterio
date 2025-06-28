@@ -20,7 +20,7 @@ pub mod gdal_engine {
         MetadataEntry as GdalMetadataEntry,
     };
     use ndarray::{Array2, ArrayView2};
-    use std::{marker::PhantomData, path::PathBuf, sync::Arc};
+    use std::{marker::PhantomData, sync::Arc};
 
     fn filter_metadata_gdal(metadata: &impl GdalMetadata) -> HashMap<String, String> {
         GdalMetadata::metadata(metadata)
@@ -86,7 +86,7 @@ pub mod gdal_engine {
     #[derive(Debug)]
     pub struct GdalFile<T: GdalDataType> {
         _t: PhantomData<T>,
-        path: PathBuf,
+        path: Arc<Path>,
         dataset: Rc<GdalDataset>,
     }
 
@@ -94,7 +94,7 @@ pub mod gdal_engine {
         fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
             let dataset = Rc::new(GdalDataset::open(&path)?);
             Ok(GdalFile {
-                path: path.as_ref().to_path_buf(),
+                path: Arc::from(path.as_ref()),
                 dataset,
                 _t: PhantomData,
             })
@@ -105,8 +105,8 @@ pub mod gdal_engine {
         fn size(&self) -> (usize, usize) {
             self.dataset.raster_size()
         }
-        fn crs(&self) -> String {
-            self.dataset.projection()
+        fn crs(&self) -> Rc<str> {
+            Rc::from(self.dataset.projection())
         }
         fn transform(&self) -> Result<BandGeoTransform> {
             let gdal_transform = self.dataset.geo_transform()?;
@@ -130,7 +130,7 @@ pub mod gdal_engine {
             let info: Rc<Box<dyn BandInfo>> =
                 Rc::new(Box::new(GdalBandInfo(Rc::clone(&self.dataset), index + 1)));
             let reader: Arc<Box<dyn BandReader<T>>> =
-                Arc::new(Box::new(GdalBandReader(self.path.clone(), index + 1)));
+                Arc::new(Box::new(GdalBandReader(Arc::clone(&self.path), index + 1)));
             Ok(RasterBand { info, reader })
         }
     }
@@ -156,7 +156,7 @@ pub mod gdal_engine {
     }
 
     #[derive(Debug)]
-    struct GdalBandReader(PathBuf, usize);
+    struct GdalBandReader(Arc<Path>, usize);
 
     impl<T: GdalDataType> BandReader<T> for GdalBandReader {
         fn read_window_as_array(

@@ -124,7 +124,7 @@ impl<T: DataType> Raster<T> {
         let transform = transform.inverse();
 
         let crs = file.crs();
-        let bounds = (crs, geo_bounds_rect).into();
+        let bounds = GeoBounds::from((crs, geo_bounds_rect));
 
         let description = file.description()?;
         let metadata = file.metadata();

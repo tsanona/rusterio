@@ -63,7 +63,7 @@ where
 pub struct View<T: DataType> {
     /// Shape of array when read.
     bounds: ViewBounds,
-    bands: Vec<ViewBand<T>>,
+    bands: Rc<Vec<ViewBand<T>>>,
 }
 
 impl<T: DataType> Debug for View<T> {
@@ -110,23 +110,23 @@ where
         let view_geo_transform = ViewGeoTransform::new(&bounds, view_pixel_shape);
         let view_bounds = ViewBounds::new((0, 0), view_pixel_shape);
 
-        let bands = selected_bands
+        let bands = Rc::new(selected_bands
             .into_iter()
             .map(|(group_info, raster_band)| {
                 let transform = ViewBandTransform::new(&view_geo_transform, &group_info.transform);
                 ViewBand::from((transform, raster_band))
             })
-            .collect();
+            .collect());
         Ok(Self {
             bounds: view_bounds,
             bands,
         })
     }
 
-    pub fn clip(mut self, bounds: ViewBounds) -> Result<Self> {
-        let original_bounds = self.bounds;
-        self.bounds = original_bounds.intersection(&bounds)?;
-        Ok(self)
+    pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
+        let bounds = self.bounds.intersection(&bounds)?;
+        let bands = Rc::clone(&self.bands);
+        Ok(Self { bounds, bands } )
     }
 
     fn par_bands(&self) -> Vec<ParBand<T>> {

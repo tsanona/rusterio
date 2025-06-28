@@ -7,9 +7,9 @@ extern crate shrinkwraprs;
 mod components;
 mod errors;
 
-use std::fmt::Debug;
+use std::{fmt::Debug, rc::Rc};
 
-pub use components::{bounds::ViewBounds, engines, raster::Raster, DataType};
+pub use components::{bounds::ViewBounds, engines, raster::Raster, DataType, view::View};
 pub use engines::gdal_engine;
 
 extern crate geo_booleanop;
@@ -25,7 +25,7 @@ use errors::{Result, RusterioError};
 
 #[derive(Shrinkwrap, Debug, Clone)]
 pub struct CrsGeometry<G: GeometryTrait> {
-    crs: String,
+    crs: Rc<str>,
     #[shrinkwrap(main_field)]
     geometry: G,
 }
@@ -34,15 +34,15 @@ impl<G: GeometryTrait + Transform<G::T, Output = G>> CrsGeometry<G>
 where
     G::T: CoordNum + Debug,
 {
-    fn with_crs(mut self, crs: String) -> Result<Self> {
-        let proj = Proj::new_known_crs(self.crs.as_str(), crs.as_str(), None)?;
-        self.crs = crs;
+    fn with_crs(mut self, crs: &str) -> Result<Self> {
+        let proj = Proj::new_known_crs(self.crs.as_ref(), crs, None)?;
+        self.crs = Rc::from(crs);
         self.geometry.transform(&proj)?;
         Ok(self)
     }
 
     fn projected_geometry(&self, crs: &str) -> Result<G> {
-        let proj = Proj::new_known_crs(self.crs.as_str(), crs, None)?;
+        let proj = Proj::new_known_crs(self.crs.as_ref(), crs, None)?;
         self.geometry
             .transformed(&proj)
             .map_err(RusterioError::ProjError)
@@ -56,7 +56,7 @@ where
     fn bounding_rect(&self) -> Option<CrsGeometry<Rect<G::T>>> {
         let geometry = self.geometry.bounding_rect().into()?;
         Some(CrsGeometry {
-            crs: self.crs.clone(),
+            crs: Rc::clone(&self.crs),
             geometry,
         })
     }
@@ -94,7 +94,7 @@ where
             _ => unimplemented!(),
         };
         Ok(CrsGeometry {
-            crs: self.crs.clone(),
+            crs: Rc::clone(&self.crs),
             geometry: lhs_polygon.intersection(&rhs_polygon),
         })
     }
@@ -109,33 +109,6 @@ fn cast_tuple<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)>
 }
 
 pub struct Indexes(Vec<usize>, bool);
-
-impl Indexes {
-    fn into_iter(self, max: usize) -> impl Iterator<Item = usize> {
-        let indexes = self.0.into_iter();
-        if self.1 {
-            let sorted_indexes = indexes.sorted().enumerate();
-            let mut non_dropped_indxs = Vec::from_iter(0..max);
-            for (shift, idx) in sorted_indexes {
-                non_dropped_indxs.remove(idx - shift);
-            }
-            non_dropped_indxs.into_iter()
-        } else {
-            indexes
-        }
-    }
-
-    fn select_from<I: Clone + Copy>(self, collection: Vec<I>) -> Vec<I> {
-        self.into_iter(collection.len())
-            .map(|idx| collection[idx])
-            .collect()
-    }
-
-    pub fn all() -> Self {
-        Self(Vec::with_capacity(0), true)
-    }
-
-}
 
 impl<const N: usize> From<([usize; N], bool)> for Indexes {
     fn from(value: ([usize; N], bool)) -> Self {
@@ -159,6 +132,33 @@ impl From<std::ops::Range<usize>> for Indexes {
     fn from(value: std::ops::Range<usize>) -> Self {
         Indexes(value.collect(), false)
     }
+}
+
+impl Indexes {
+    fn into_iter(self, max: usize) -> impl Iterator<Item = usize> {
+        let indexes = self.0.into_iter();
+        if self.1 {
+            let sorted_indexes = indexes.sorted().enumerate();
+            let mut non_dropped_indxs = Vec::from_iter(0..max);
+            for (shift, idx) in sorted_indexes {
+                non_dropped_indxs.remove(idx - shift);
+            }
+            return non_dropped_indxs.into_iter()
+        } else {
+            return indexes
+        }
+    }
+
+    fn select_from<I: Clone + Copy>(self, collection: Vec<I>) -> Vec<I> {
+        self.into_iter(collection.len())
+        .map(|idx| collection[idx])
+        .collect()
+    }
+
+    pub fn all() -> Self {
+        Self(Vec::with_capacity(0), true)
+    }
+
 }
 
 #[cfg(test)]
