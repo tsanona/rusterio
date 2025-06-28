@@ -9,7 +9,7 @@ mod errors;
 
 use std::{fmt::Debug, rc::Rc};
 
-pub use components::{bounds::ViewBounds, engines, raster::Raster, DataType, view::View};
+pub use components::{bounds::ViewBounds, engines, raster::Raster, DataType, view::{View, SendSyncView}};
 pub use engines::gdal_engine;
 
 extern crate geo_booleanop;

@@ -32,24 +32,24 @@ impl<T: DataType> From<(ViewBandTransform, &RasterBand<T>)> for ViewBand<T> {
     }
 }
 
-pub struct ParBand<T: DataType> {
+pub struct SendSyncBand<T: DataType> {
     transform: ViewBandTransform,
     reader: Arc<Box<dyn BandReader<T>>>,
 }
 
-impl<T: DataType> From<&ViewBand<T>> for ParBand<T> {
+impl<T: DataType> From<&ViewBand<T>> for SendSyncBand<T> {
     fn from(value: &ViewBand<T>) -> Self {
         let ViewBand {
             transform, reader, ..
         } = value;
-        ParBand {
+        SendSyncBand {
             transform: *transform,
             reader: Arc::clone(reader),
         }
     }
 }
 
-impl<T> ParBand<T>
+impl<T> SendSyncBand<T>
 where
     T: DataType,
 {
@@ -129,10 +129,10 @@ where
         Ok(Self { bounds, bands } )
     }
 
-    fn par_bands(&self) -> Vec<ParBand<T>> {
+    fn par_bands(&self) -> Vec<SendSyncBand<T>> {
         self.bands
             .iter()
-            .map(|view_band| ParBand::from(view_band))
+            .map(|view_band| SendSyncBand::from(view_band))
             .collect()
     }
 
@@ -156,6 +156,83 @@ where
         let read_shape = self.bounds.shape();
         let view_bounds = &self.bounds;
         let read_bands = self.par_bands();
+        let errors: Result<()> = array
+            .axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .zip(read_bands)
+            .map(|(mut arr_band, read_band)| {
+                let read_bounds = view_bounds.to_read_bounds(read_band.transform)?;
+                match read_bounds.shape() {
+                    (1, 1) => Ok(arr_band.fill(read_band.read(read_bounds)?[[0, 0]])),
+                    shape if shape.eq(&read_shape) => {
+                        Ok(arr_band.assign(&read_band.read(read_bounds)?))
+                    }
+                    shape => {
+                        let ratio = read_band.transform.ratio();
+                        let read_max: (usize, usize) = arr_band.dim();
+                        Ok(read_band
+                            .read(read_bounds)?
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, val)| {
+                                let (x_slice, y_slice) =
+                                    Self::index_slice(idx, shape, ratio, read_max);
+                                arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
+                            })
+                            .collect())
+                    }
+                }
+            })
+            .collect();
+        errors.map(|_| array)
+    }
+
+    /// Array shape (C, H, W)
+    pub fn shape(&self) -> (usize, usize, usize) {
+        let (width, hieght) = self.bounds.shape();
+        (self.bands.len(), hieght, width)
+    }
+
+    pub fn as_send_sync(self) -> SendSyncView<T> {
+        let bands = Arc::new(self.par_bands());
+        let bounds = self.bounds;
+        SendSyncView { bounds, bands}
+    }
+}
+
+pub struct SendSyncView<T: DataType> {
+    /// Shape of array when read.
+    bounds: ViewBounds,
+    bands: Arc<Vec<SendSyncBand<T>>>,
+}
+
+impl<T: DataType> SendSyncView<T> {
+    pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
+        let bounds = self.bounds.intersection(&bounds)?;
+        let bands = Arc::clone(&self.bands);
+        Ok(Self { bounds, bands } )
+    }
+
+    fn index_slice(
+        index: usize,
+        bounds: (usize, usize),
+        ratio: (usize, usize),
+        read_max: (usize, usize),
+    ) -> (core::ops::Range<usize>, core::ops::Range<usize>) {
+        let (bounds_y, bounds_x) = bounds;
+        let (ratio_x, ratio_y) = ratio;
+        let (x, y) = (bounds_x - index % bounds_x, bounds_y - index / bounds_y);
+        let x_slice = ((x - 1) * ratio_x)..(x * ratio_x).min(read_max.0);
+        let y_slice = ((y - 1) * ratio_y)..(y * ratio_y).min(read_max.1);
+        (x_slice, y_slice)
+    }
+
+    // TODO: add masking
+    pub fn read(&self /* , mask: Option<ArrayView2<bool>> */) -> Result<Array3<T>> {
+        let mut array = Array3::zeros(self.shape());
+        let read_shape = self.bounds.shape();
+        let view_bounds = &self.bounds;
+        let read_bands = self.bands.as_ref();
         let errors: Result<()> = array
             .axis_iter_mut(Axis(0))
             .into_par_iter()
