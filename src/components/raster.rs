@@ -17,8 +17,8 @@ use crate::{
 
 #[derive(Debug)]
 pub struct RasterBand<T: DataType> {
-    pub info: Rc<Box<dyn BandInfo>>,
-    pub reader: Arc<Box<dyn BandReader<T>>>,
+    pub info: Rc<dyn BandInfo>,
+    pub reader: Arc<dyn BandReader<T>>,
 }
 
 #[derive(Debug)]

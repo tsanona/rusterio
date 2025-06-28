@@ -17,8 +17,8 @@ use crate::{
 pub struct ViewBand<T: DataType> {
     /// Transform from [RasterView] pixel space to band pixel space.
     transform: ViewBandTransform,
-    info: Rc<Box<dyn BandInfo>>,
-    reader: Arc<Box<dyn BandReader<T>>>,
+    info: Rc<dyn BandInfo>,
+    reader: Arc<dyn BandReader<T>>,
 }
 
 impl<T: DataType> From<(ViewBandTransform, &RasterBand<T>)> for ViewBand<T> {
@@ -34,7 +34,7 @@ impl<T: DataType> From<(ViewBandTransform, &RasterBand<T>)> for ViewBand<T> {
 
 pub struct SendSyncBand<T: DataType> {
     transform: ViewBandTransform,
-    reader: Arc<Box<dyn BandReader<T>>>,
+    reader: Arc<dyn BandReader<T>>,
 }
 
 impl<T: DataType> From<&ViewBand<T>> for SendSyncBand<T> {
@@ -63,7 +63,7 @@ where
 pub struct View<T: DataType> {
     /// Shape of array when read.
     bounds: ViewBounds,
-    bands: Rc<Vec<ViewBand<T>>>,
+    bands: Rc<[ViewBand<T>]>,
 }
 
 impl<T: DataType> Debug for View<T> {
@@ -110,7 +110,7 @@ where
         let view_geo_transform = ViewGeoTransform::new(&bounds, view_pixel_shape);
         let view_bounds = ViewBounds::new((0, 0), view_pixel_shape);
 
-        let bands = Rc::new(
+        let bands = Rc::from_iter(
             selected_bands
                 .into_iter()
                 .map(|(group_info, raster_band)| {
@@ -118,7 +118,6 @@ where
                         ViewBandTransform::new(&view_geo_transform, &group_info.transform);
                     ViewBand::from((transform, raster_band))
                 })
-                .collect(),
         );
         Ok(Self {
             bounds: view_bounds,
@@ -197,7 +196,7 @@ where
     }
 
     pub fn as_send_sync(self) -> SendSyncView<T> {
-        let bands = Arc::new(self.par_bands());
+        let bands = Arc::from_iter(self.par_bands().into_iter());
         let bounds = self.bounds;
         SendSyncView { bounds, bands }
     }
@@ -206,7 +205,7 @@ where
 pub struct SendSyncView<T: DataType> {
     /// Shape of array when read.
     bounds: ViewBounds,
-    bands: Arc<Vec<SendSyncBand<T>>>,
+    bands: Arc<[SendSyncBand<T>]>,
 }
 
 impl<T: DataType> SendSyncView<T> {

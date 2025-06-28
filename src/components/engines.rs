@@ -125,10 +125,10 @@ pub mod gdal_engine {
             filter_metadata_gdal(self.dataset.as_ref())
         }
         fn band(&self, index: usize) -> Result<RasterBand<T>> {
-            let info: Rc<Box<dyn BandInfo>> =
-                Rc::new(Box::new(GdalBandInfo(Rc::clone(&self.dataset), index + 1)));
-            let reader: Arc<Box<dyn BandReader<T>>> =
-                Arc::new(Box::new(GdalBandReader(Arc::clone(&self.path), index + 1)));
+            let info: Rc<dyn BandInfo> =
+                Rc::new(GdalBandInfo(Rc::clone(&self.dataset), index + 1));
+            let reader: Arc<dyn BandReader<T>> =
+                Arc::new(GdalBandReader(Arc::clone(&self.path), index + 1));
             Ok(RasterBand { info, reader })
         }
     }
