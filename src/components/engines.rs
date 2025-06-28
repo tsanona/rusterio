@@ -72,9 +72,7 @@ pub mod gdal_engine {
                             (Indexes::all()),
                             (Indexes::from([0usize, 1])),
                         ])
-                        .map(|(path, indexes)| {
-                            Raster::new::<GdalFile<T>, _>(path, indexes)
-                        })
+                        .map(|(path, indexes)| Raster::new::<GdalFile<T>, _>(path, indexes))
                         .collect::<Result<Vec<_>>>()?;
                     return Raster::stack(sub_dataset_paths);
                 }

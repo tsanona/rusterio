@@ -16,7 +16,8 @@ pub trait File<T: DataType>: Debug + Sized {
     fn band(&self, index: usize) -> Result<RasterBand<T>>;
     fn bands(&self, indexes: Indexes) -> Result<Vec<RasterBand<T>>> {
         indexes
-            .into_iter(self.num_bands())
+            .indexes_from(self.num_bands())
+            .into_iter()
             .map(|idx| self.band(idx))
             .collect()
     }

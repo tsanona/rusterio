@@ -7,9 +7,15 @@ extern crate shrinkwraprs;
 mod components;
 mod errors;
 
-use std::{fmt::Debug, rc::Rc};
+use std::{collections::HashSet, fmt::Debug, hash::RandomState, rc::Rc};
 
-pub use components::{bounds::ViewBounds, engines, raster::Raster, DataType, view::{View, SendSyncView}};
+pub use components::{
+    bounds::ViewBounds,
+    engines,
+    raster::Raster,
+    view::{SendSyncView, View},
+    DataType,
+};
 pub use engines::gdal_engine;
 
 extern crate geo_booleanop;
@@ -19,7 +25,6 @@ use geo::{
     BooleanOps, BoundingRect, Coord, CoordNum, LineString, MultiPolygon, Polygon, Rect,
 };
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, RectTrait};
-use itertools::Itertools;
 
 use errors::{Result, RusterioError};
 
@@ -108,57 +113,74 @@ fn cast_tuple<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)>
     Ok((cast(tuple.0)?, cast(tuple.1)?))
 }
 
-pub struct Indexes(Vec<usize>, bool);
+pub struct Indexes {
+    selection: Vec<usize>,
+    drop: bool,
+}
 
 impl<const N: usize> From<([usize; N], bool)> for Indexes {
     fn from(value: ([usize; N], bool)) -> Self {
-        Indexes(value.0.to_vec(), value.1)
+        let selection = value.0.to_vec();
+        let drop = value.1;
+        Indexes { selection, drop }
     }
 }
 
 impl From<(std::ops::Range<usize>, bool)> for Indexes {
     fn from(value: (std::ops::Range<usize>, bool)) -> Self {
-        Indexes(value.0.collect(), value.1)
+        let selection = value.0.collect();
+        let drop = value.1;
+        Indexes { selection, drop }
     }
 }
 
 impl<const N: usize> From<[usize; N]> for Indexes {
     fn from(value: [usize; N]) -> Self {
-        Indexes(value.to_vec(), false)
+        let selection = value.to_vec();
+        Indexes {
+            selection,
+            drop: false,
+        }
     }
 }
 
 impl From<std::ops::Range<usize>> for Indexes {
     fn from(value: std::ops::Range<usize>) -> Self {
-        Indexes(value.collect(), false)
+        let selection = value.collect();
+        Indexes {
+            selection,
+            drop: false,
+        }
     }
 }
 
 impl Indexes {
-    fn into_iter(self, max: usize) -> impl Iterator<Item = usize> {
-        let indexes = self.0.into_iter();
-        if self.1 {
-            let sorted_indexes = indexes.sorted().enumerate();
-            let mut non_dropped_indxs = Vec::from_iter(0..max);
-            for (shift, idx) in sorted_indexes {
-                non_dropped_indxs.remove(idx - shift);
-            }
-            return non_dropped_indxs.into_iter()
+    fn indexes_from(self, collection_len: usize) -> Vec<usize> {
+        let idxs = self.selection;
+        if self.drop {
+            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(idxs.into_iter());
+            HashSet::from_iter(0..collection_len)
+                .difference(&drop_idxs)
+                .map(|idx| *idx)
+                .collect()
         } else {
-            return indexes
+            idxs
         }
     }
 
-    fn select_from<I: Clone + Copy>(self, collection: Vec<I>) -> Vec<I> {
-        self.into_iter(collection.len())
-        .map(|idx| collection[idx])
-        .collect()
+    pub fn select_from<I: Clone + Copy>(self, collection: Vec<I>) -> Vec<I> {
+        self.indexes_from(collection.len())
+            .into_iter()
+            .map(|idx| collection[idx])
+            .collect()
     }
 
     pub fn all() -> Self {
-        Self(Vec::with_capacity(0), true)
+        Self {
+            selection: Vec::with_capacity(0),
+            drop: true,
+        }
     }
-
 }
 
 #[cfg(test)]

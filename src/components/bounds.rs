@@ -37,12 +37,12 @@ impl GeoBounds {
     }
 
     pub fn intersection(&self, rhs: &GeoBounds) -> Result<GeoBounds> {
-        Ok(GeoBounds(self
-            .0
-            .intersection(&rhs.0)?
-            .bounding_rect()
-            .ok_or(BoundsError::NoIntersection)?
-            ))
+        Ok(GeoBounds(
+            self.0
+                .intersection(&rhs.0)?
+                .bounding_rect()
+                .ok_or(BoundsError::NoIntersection)?,
+        ))
     }
 }
 

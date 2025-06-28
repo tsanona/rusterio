@@ -110,13 +110,16 @@ where
         let view_geo_transform = ViewGeoTransform::new(&bounds, view_pixel_shape);
         let view_bounds = ViewBounds::new((0, 0), view_pixel_shape);
 
-        let bands = Rc::new(selected_bands
-            .into_iter()
-            .map(|(group_info, raster_band)| {
-                let transform = ViewBandTransform::new(&view_geo_transform, &group_info.transform);
-                ViewBand::from((transform, raster_band))
-            })
-            .collect());
+        let bands = Rc::new(
+            selected_bands
+                .into_iter()
+                .map(|(group_info, raster_band)| {
+                    let transform =
+                        ViewBandTransform::new(&view_geo_transform, &group_info.transform);
+                    ViewBand::from((transform, raster_band))
+                })
+                .collect(),
+        );
         Ok(Self {
             bounds: view_bounds,
             bands,
@@ -126,7 +129,7 @@ where
     pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
         let bounds = self.bounds.intersection(&bounds)?;
         let bands = Rc::clone(&self.bands);
-        Ok(Self { bounds, bands } )
+        Ok(Self { bounds, bands })
     }
 
     fn par_bands(&self) -> Vec<SendSyncBand<T>> {
@@ -196,7 +199,7 @@ where
     pub fn as_send_sync(self) -> SendSyncView<T> {
         let bands = Arc::new(self.par_bands());
         let bounds = self.bounds;
-        SendSyncView { bounds, bands}
+        SendSyncView { bounds, bands }
     }
 }
 
@@ -210,7 +213,7 @@ impl<T: DataType> SendSyncView<T> {
     pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
         let bounds = self.bounds.intersection(&bounds)?;
         let bands = Arc::clone(&self.bands);
-        Ok(Self { bounds, bands } )
+        Ok(Self { bounds, bands })
     }
 
     fn index_slice(

@@ -112,10 +112,7 @@ impl<T: DataType> Debug for Raster<T> {
 }
 
 impl<T: DataType> Raster<T> {
-    pub fn new<F: File<T>, P: AsRef<Path>>(
-        path: P,
-        band_indexes: Indexes,
-    ) -> Result<Self> {
+    pub fn new<F: File<T>, P: AsRef<Path>>(path: P, band_indexes: Indexes) -> Result<Self> {
         let file = F::open(path)?;
 
         let transform = file.transform()?;
@@ -159,11 +156,7 @@ impl<T: DataType> Raster<T> {
         })
     }
 
-    pub fn view(
-        &self,
-        bounds: Option<GeoBounds>,
-        band_indexes: Indexes
-    ) -> Result<View<T>> {
+    pub fn view(&self, bounds: Option<GeoBounds>, band_indexes: Indexes) -> Result<View<T>> {
         let mut view_geo_bounds = self.bounds.clone();
         if let Some(geo_bounds) = bounds {
             view_geo_bounds = view_geo_bounds.intersection(&geo_bounds)?
