@@ -51,20 +51,23 @@ pub struct ViewBounds(Rect<usize>);
 
 impl ViewBounds {
     pub fn new(offset: (usize, usize), shape: (usize, usize)) -> Self {
-        Self(Rect::new(offset, shape))
+        let offset = Coord::from(offset);
+        let max = offset + Coord::from(shape);
+        Self(Rect::new(offset, max))
     }
     pub fn shape(&self) -> (usize, usize) {
         (self.0.height(), self.0.width())
     }
 
-    pub fn max(&self) -> Coord<usize> {
-        self.0.min() + self.0.max()
+    pub fn num_pixels(&self) -> usize {
+        let (height, width) = self.shape();
+        height * width
     }
 
     pub fn intersection(&self, rhs: &Self) -> std::result::Result<Self, BoundsError> {
         if self.0.intersects(&rhs.0) {
-            let (self_max_x, self_max_y) = self.max().x_y();
-            let (rhs_max_x, rhs_max_y) = rhs.max().x_y();
+            let (self_max_x, self_max_y) = self.0.max().x_y();
+            let (rhs_max_x, rhs_max_y) = rhs.0.max().x_y();
             let max = (self_max_x.min(rhs_max_x), self_max_y.min(rhs_max_y));
 
             let (self_min_x, self_min_y) = self.0.min().x_y();
@@ -104,6 +107,7 @@ impl ReadBounds {
         self.0.min().x_y()
     }
 
+    /// (Height, Width)
     pub fn shape(&self) -> (usize, usize) {
         (self.0.height(), self.0.width())
     }

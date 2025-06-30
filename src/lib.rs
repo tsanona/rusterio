@@ -113,6 +113,10 @@ fn cast_tuple<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)>
     Ok((cast(tuple.0)?, cast(tuple.1)?))
 }
 
+fn swap<T>(tuple: (T, T)) -> (T, T) {
+    (tuple.1, tuple.0)
+}
+
 pub struct Indexes {
     selection: Vec<usize>,
     drop: bool,
@@ -215,6 +219,7 @@ mod tests {
         let arr = sentinel_view
             .clip(ViewBounds::new((0, 0), (1250, 1250)))
             .unwrap()
+            .as_send_sync()
             .read()
             .unwrap();
         println!("{:?}", &arr);

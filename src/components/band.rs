@@ -1,7 +1,7 @@
 use ndarray::{Array2, ArrayView2};
 
 use crate::{
-    components::{DataType, Metadata},
+    components::{bounds::ReadBounds, DataType, Metadata},
     errors::Result,
 };
 
@@ -12,13 +12,17 @@ pub trait BandInfo: std::fmt::Debug {
 }
 
 pub trait BandReader<T: DataType>: Send + Sync + std::fmt::Debug {
-    fn read_window_as_array(
+    fn read_as_array(
         &self,
-        // Position of bottom left corner.
-        offset: (usize, usize),
-        size: (usize, usize),
-        mask: Option<ArrayView2<bool>>,
+        bounds: ReadBounds,
+        mask: Option<ArrayView2<bool>>, //TODO: rethink this
     ) -> Result<Array2<T>>;
+
+    fn read_into_slice(
+        &self,
+        bounds: ReadBounds,
+        slice: &mut [T]
+    ) -> Result<()>;
 
     /* fn read_block_as_array(
         &self,

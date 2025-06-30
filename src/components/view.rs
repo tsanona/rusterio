@@ -1,4 +1,4 @@
-use ndarray::{parallel::prelude::*, s, Array2, Array3, Axis};
+use ndarray::{parallel::prelude::*, s, Array3, Axis};
 use num::Integer;
 use std::{collections::HashSet, fmt::Debug, rc::Rc, sync::Arc};
 
@@ -49,16 +49,6 @@ impl<T: DataType> From<&ViewBand<T>> for SendSyncBand<T> {
     }
 }
 
-impl<T> SendSyncBand<T>
-where
-    T: DataType,
-{
-    fn read(&self, bounds: ReadBounds) -> Result<Array2<T>> {
-        self.reader
-            .read_window_as_array(bounds.offset(), bounds.shape(), None)
-    }
-}
-
 //#[derive(Clone)]
 pub struct View<T: DataType> {
     /// Shape of array when read.
@@ -74,7 +64,7 @@ impl<T: DataType> Debug for View<T> {
             .iter()
             .map(|view_band| view_band.info.name())
             .collect();
-        f.field("pixel_shape", &self.bounds.shape())
+        f.field("bounds", &self.bounds)
             .field("bands", &bands)
             .finish()
     }
@@ -152,43 +142,6 @@ where
         (x_slice, y_slice)
     }
 
-    // TODO: add masking
-    pub fn read(&self /* , mask: Option<ArrayView2<bool>> */) -> Result<Array3<T>> {
-        let mut array = Array3::zeros(self.shape());
-        let read_shape = self.bounds.shape();
-        let view_bounds = &self.bounds;
-        let read_bands = self.par_bands();
-        let errors: Result<()> = array
-            .axis_iter_mut(Axis(0))
-            .into_par_iter()
-            .zip(read_bands)
-            .map(|(mut arr_band, read_band)| {
-                let read_bounds = view_bounds.to_read_bounds(read_band.transform)?;
-                match read_bounds.shape() {
-                    (1, 1) => Ok(arr_band.fill(read_band.read(read_bounds)?[[0, 0]])),
-                    shape if shape.eq(&read_shape) => {
-                        Ok(arr_band.assign(&read_band.read(read_bounds)?))
-                    }
-                    shape => {
-                        let ratio = read_band.transform.ratio();
-                        let read_max: (usize, usize) = arr_band.dim();
-                        Ok(read_band
-                            .read(read_bounds)?
-                            .into_iter()
-                            .enumerate()
-                            .map(|(idx, val)| {
-                                let (x_slice, y_slice) =
-                                    Self::index_slice(idx, shape, ratio, read_max);
-                                arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
-                            })
-                            .collect())
-                    }
-                }
-            })
-            .collect();
-        errors.map(|_| array)
-    }
-
     /// Array shape (C, H, W)
     pub fn shape(&self) -> (usize, usize, usize) {
         let (width, hieght) = self.bounds.shape();
@@ -242,15 +195,15 @@ impl<T: DataType> SendSyncView<T> {
             .map(|(mut arr_band, read_band)| {
                 let read_bounds = view_bounds.to_read_bounds(read_band.transform)?;
                 match read_bounds.shape() {
-                    (1, 1) => Ok(arr_band.fill(read_band.read(read_bounds)?[[0, 0]])),
+                    (1, 1) => Ok(arr_band.fill(read_band.reader.read_as_array(read_bounds, None)?[[0, 0]])),
                     shape if shape.eq(&read_shape) => {
-                        Ok(arr_band.assign(&read_band.read(read_bounds)?))
+                        Ok(arr_band.assign(&read_band.reader.read_as_array(read_bounds, None)?))
                     }
                     shape => {
                         let ratio = read_band.transform.ratio();
                         let read_max: (usize, usize) = arr_band.dim();
                         Ok(read_band
-                            .read(read_bounds)?
+                            .reader.read_as_array(read_bounds, None)?
                             .into_iter()
                             .enumerate()
                             .map(|(idx, val)| {
