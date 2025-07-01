@@ -1,18 +1,16 @@
-use std::{collections::HashMap, fmt::Debug, path::Path, rc::Rc, marker::PhantomData, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, marker::PhantomData, path::Path, rc::Rc, sync::Arc};
 
 use crate::{
     components::{
         band::{BandInfo, BandReader},
+        bounds::ReadBounds,
         file::File,
         raster::RasterBand,
         transforms::BandGeoTransform,
         DataType, Metadata,
-        bounds::ReadBounds
     },
-    cast_tuple,
-    swap,
-    errors::{Result, RusterioError},
-    Indexes, Raster,
+    errors::Result,
+    try_tuple_cast, Indexes, Raster,
 };
 
 /// Implementations for gdal
@@ -22,7 +20,6 @@ pub mod gdal_engine {
         raster::GdalType, Dataset as GdalDataset, Metadata as GdalMetadata,
         MetadataEntry as GdalMetadataEntry,
     };
-    use ndarray::{Array2, ArrayView2};
 
     fn filter_metadata_gdal(metadata: &impl GdalMetadata) -> HashMap<String, String> {
         GdalMetadata::metadata(metadata)
@@ -127,8 +124,7 @@ pub mod gdal_engine {
             filter_metadata_gdal(self.dataset.as_ref())
         }
         fn band(&self, index: usize) -> Result<RasterBand<T>> {
-            let info: Rc<dyn BandInfo> =
-                Rc::new(GdalBandInfo(Rc::clone(&self.dataset), index + 1));
+            let info: Rc<dyn BandInfo> = Rc::new(GdalBandInfo(Rc::clone(&self.dataset), index + 1));
             let reader: Arc<dyn BandReader<T>> =
                 Arc::new(GdalBandReader(Arc::clone(&self.path), index + 1));
             Ok(RasterBand { info, reader })
@@ -159,71 +155,17 @@ pub mod gdal_engine {
     struct GdalBandReader(Arc<Path>, usize);
 
     impl<T: GdalDataType> BandReader<T> for GdalBandReader {
-        fn read_as_array(
-            &self,
-            bounds: ReadBounds,
-            mask: Option<ArrayView2<bool>>,
-        ) -> Result<Array2<T>> {
-            let array;
-            let size = bounds.shape();
-            let offset = cast_tuple(bounds.offset())?;
-            if let Some(mask) = mask {
-                if mask.mapv(i8::from).sum().eq(&0) {
-                    return Ok(Array2::zeros(swap(size)));
-                } else {
-                    array = mask.mapv(T::from)
-                }
-            } else {
-                array = Array2::ones(swap(size));
-            }
-            let dataset = GdalDataset::open(&self.0)?;
-            let rasterband = dataset.rasterband(self.1)?;
-            if T::gdal_ordinal() != rasterband.band_type() as u32 {
-                Err(gdal::errors::GdalError::BadArgument(
-                    "result array type must match band data types".to_string(),
-                ))?
-            }
-            let buffer = rasterband.read_as::<T>(
-                offset,
-                size,
-                size,
-                None,
-            )?;
-            Array2::from_shape_vec(swap(size), buffer.data().to_vec())
-                .map_err(RusterioError::NdarrayError)
-                // Array2 shape is (rows, cols) and Buffer shape is (cols in x-axis, rows in y-axis)
-                // thus needs T to correct orientation
-                .map(|read| array * read)
-        }
-
-        fn read_into_slice(
-            &self,
-            bounds: ReadBounds,
-            slice: &mut [T]
-        ) -> Result<()> {
+        fn read_into_slice(&self, bounds: ReadBounds, slice: &mut [T]) -> Result<()> {
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(self.1)?;
             let size = bounds.shape();
-            let offset = cast_tuple(bounds.offset())?;
+            let offset = try_tuple_cast(bounds.offset())?;
             /* if T::gdal_ordinal() != rasterband.band_type() as u32 {
                 Err(gdal::errors::GdalError::BadArgument(
                     "result array type must match band data types".to_string(),
                 ))?
             } */
-            Ok(rasterband.read_into_slice::<T>(
-                offset,
-                size,
-                size,
-                slice,
-                None,
-            )?)
+            Ok(rasterband.read_into_slice::<T>(offset, size, size, slice, None)?)
         }
-
-        /* fn read_band_block_as_array(
-            &self,
-            index: (usize, usize),
-            band_index: usize,
-            mask: &Option<ArrayView2<'a, bool>>,
-        ) -> Result<Array2<T>>  */
     }
 }

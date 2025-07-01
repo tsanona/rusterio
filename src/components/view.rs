@@ -1,28 +1,28 @@
-use ndarray::{parallel::prelude::*, s, Array3, Axis};
-use num::Integer;
+use rayon::prelude::*;
 use std::{collections::HashSet, fmt::Debug, rc::Rc, sync::Arc};
 
 use crate::{
     components::{
         band::{BandInfo, BandReader},
-        bounds::{GeoBounds, ReadBounds, ViewBounds},
+        bounds::{GeoBounds, ViewBounds},
         raster::{RasterBand, RasterGroupInfo},
-        transforms::{ViewBandTransform, ViewGeoTransform},
+        transforms::{ViewGeoTransform, ViewReadTransform},
         DataType,
     },
-    errors::Result,
+    errors::{Result, RusterioError},
+    Buffer,
 };
 
 #[derive(Debug, Clone)]
 pub struct ViewBand<T: DataType> {
     /// Transform from [RasterView] pixel space to band pixel space.
-    transform: ViewBandTransform,
+    transform: ViewReadTransform,
     info: Rc<dyn BandInfo>,
     reader: Arc<dyn BandReader<T>>,
 }
 
-impl<T: DataType> From<(ViewBandTransform, &RasterBand<T>)> for ViewBand<T> {
-    fn from(value: (ViewBandTransform, &RasterBand<T>)) -> Self {
+impl<T: DataType> From<(ViewReadTransform, &RasterBand<T>)> for ViewBand<T> {
+    fn from(value: (ViewReadTransform, &RasterBand<T>)) -> Self {
         let (transform, RasterBand { info, reader }) = value;
         ViewBand {
             transform,
@@ -33,7 +33,7 @@ impl<T: DataType> From<(ViewBandTransform, &RasterBand<T>)> for ViewBand<T> {
 }
 
 pub struct SendSyncBand<T: DataType> {
-    transform: ViewBandTransform,
+    transform: ViewReadTransform,
     reader: Arc<dyn BandReader<T>>,
 }
 
@@ -76,7 +76,7 @@ where
 {
     pub fn new(
         bounds: GeoBounds,
-        selected_bands: Vec<(&RasterGroupInfo, &RasterBand<T>)>,
+        selected_bands: Box<[(&RasterGroupInfo, &RasterBand<T>)]>,
     ) -> Result<Self> {
         let view_group_infos: HashSet<&RasterGroupInfo> = selected_bands
             .iter()
@@ -86,29 +86,13 @@ where
             .into_iter()
             .map(|group_info| &group_info.transform);
 
-        let mut band_bounds = view_transforms
-            .into_iter()
-            .map(|transform| ReadBounds::new(&bounds, transform))
-            .collect::<Result<Vec<ReadBounds>>>()?;
-        let mut view_pixel_shape = band_bounds.pop().unwrap().shape();
-        for band_pixel_shape in band_bounds.into_iter().map(|bounds| bounds.shape()) {
-            view_pixel_shape = (
-                view_pixel_shape.0.lcm(&band_pixel_shape.0),
-                view_pixel_shape.1.lcm(&band_pixel_shape.1),
-            )
-        }
-        let view_geo_transform = ViewGeoTransform::new(&bounds, view_pixel_shape);
-        let view_bounds = ViewBounds::new((0, 0), view_pixel_shape);
+        let view_bounds = ViewBounds::from(&bounds, view_transforms)?;
+        let view_geo_transform = ViewGeoTransform::new(&view_bounds, &bounds)?;
 
-        let bands = Rc::from_iter(
-            selected_bands
-                .into_iter()
-                .map(|(group_info, raster_band)| {
-                    let transform =
-                        ViewBandTransform::new(&view_geo_transform, &group_info.transform);
-                    ViewBand::from((transform, raster_band))
-                })
-        );
+        let bands = Rc::from_iter(selected_bands.iter().map(|(group_info, raster_band)| {
+            let transform = ViewReadTransform::new(&view_geo_transform, &group_info.transform);
+            ViewBand::from((transform, *raster_band))
+        }));
         Ok(Self {
             bounds: view_bounds,
             bands,
@@ -121,7 +105,7 @@ where
         Ok(Self { bounds, bands })
     }
 
-    fn par_bands(&self) -> Vec<SendSyncBand<T>> {
+    fn par_bands(&self) -> Box<[SendSyncBand<T>]> {
         self.bands
             .iter()
             .map(|view_band| SendSyncBand::from(view_band))
@@ -148,8 +132,12 @@ where
         (self.bands.len(), hieght, width)
     }
 
-    pub fn as_send_sync(self) -> SendSyncView<T> {
-        let bands = Arc::from_iter(self.par_bands().into_iter());
+    pub fn read(self) -> Result<Buffer<T, 3>> {
+        self.to_send_sync().read()
+    }
+
+    pub fn to_send_sync(self) -> SendSyncView<T> {
+        let bands = Arc::from_iter(self.par_bands());
         let bounds = self.bounds;
         SendSyncView { bounds, bands }
     }
@@ -182,25 +170,32 @@ impl<T: DataType> SendSyncView<T> {
         (x_slice, y_slice)
     }
 
-    // TODO: add masking
-    pub fn read(&self /* , mask: Option<ArrayView2<bool>> */) -> Result<Array3<T>> {
-        let mut array = Array3::zeros(self.shape());
-        let read_shape = self.bounds.shape();
-        let view_bounds = &self.bounds;
-        let read_bands = self.bands.as_ref();
-        let errors: Result<()> = array
-            .axis_iter_mut(Axis(0))
-            .into_par_iter()
-            .zip(read_bands)
-            .map(|(mut arr_band, read_band)| {
-                let read_bounds = view_bounds.to_read_bounds(read_band.transform)?;
+    pub fn read(&self) -> Result<Buffer<T, 3>> {
+        let mut buff = Buffer::new(self.array_shape());
+        buff.as_mut_data()
+            .par_chunks_mut(self.bounds.num_pixels())
+            .zip(self.bands.into_par_iter())
+            .map(|(band_buff, read_band)| {
+                let read_bounds = self.bounds.to_read_bounds(read_band.transform)?;
                 match read_bounds.shape() {
-                    (1, 1) => Ok(arr_band.fill(read_band.reader.read_as_array(read_bounds, None)?[[0, 0]])),
-                    shape if shape.eq(&read_shape) => {
-                        Ok(arr_band.assign(&read_band.reader.read_as_array(read_bounds, None)?))
+                    (1, 1) => {
+                        let mut read_buff = [T::zero()];
+                        read_band
+                            .reader
+                            .read_into_slice(read_bounds, &mut read_buff)?;
+                        Ok::<_, RusterioError>(band_buff.fill(read_buff[0]))
+                    }
+                    shape if shape.eq(&self.bounds.shape()) => {
+                        Ok(read_band.reader.read_into_slice(read_bounds, band_buff)?)
                     }
                     shape => {
-                        let ratio = read_band.transform.ratio();
+                        let (view_offset_x, view_offset_y) = self.bounds.offset();
+                        let (ratio_x, ratio_y) = read_band.transform.ratio();
+                        let view_relative_band_x = ratio_x - (view_offset_x % ratio_x);
+                        let view_relative_band_y = ratio_y - (view_offset_y % ratio_y);
+
+                        unimplemented!()
+                        /* let ratio = read_band.transform.ratio();
                         let read_max: (usize, usize) = arr_band.dim();
                         Ok(read_band
                             .reader.read_as_array(read_bounds, None)?
@@ -211,17 +206,25 @@ impl<T: DataType> SendSyncView<T> {
                                     Self::index_slice(idx, shape, ratio, read_max);
                                 arr_band.slice_mut(s![x_slice, y_slice]).fill(val);
                             })
-                            .collect())
+                            .collect()) */
                     }
                 }
             })
-            .collect();
-        errors.map(|_| array)
+            .collect::<Result<Vec<()>>>()?;
+        Ok(buff)
+    }
+
+    pub fn bounds_shape(&self) -> (usize, usize) {
+        self.bounds.shape()
     }
 
     /// Array shape (C, H, W)
-    pub fn shape(&self) -> (usize, usize, usize) {
+    pub fn array_shape(&self) -> [usize; 3] {
         let (width, hieght) = self.bounds.shape();
-        (self.bands.len(), hieght, width)
+        [self.bands.len(), hieght, width]
+    }
+
+    fn num_pixels(&self) -> usize {
+        self.array_shape().into_iter().product()
     }
 }

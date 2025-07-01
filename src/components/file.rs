@@ -14,11 +14,11 @@ pub trait File<T: DataType>: Debug + Sized {
     fn transform(&self) -> Result<BandGeoTransform>;
     fn num_bands(&self) -> usize;
     fn band(&self, index: usize) -> Result<RasterBand<T>>;
-    fn bands(&self, indexes: Indexes) -> Result<Vec<RasterBand<T>>> {
+    fn bands(&self, indexes: Indexes) -> Result<Box<[RasterBand<T>]>> {
         indexes
             .indexes_from(self.num_bands())
-            .into_iter()
-            .map(|idx| self.band(idx))
+            .iter()
+            .map(|idx| self.band(*idx))
             .collect()
     }
     fn metadata(&self) -> HashMap<String, String>;

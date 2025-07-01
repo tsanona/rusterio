@@ -17,8 +17,6 @@ geo-traits = "0.2.0"
 geo-booleanop = "0.3.2"
 geo-rasterize = { git="https://github.com/tsanona/geo-rasterize.git", branch = "update-dependencies" }
 
-ndarray = { version = "0.16.1", features = ["rayon"] }
-
 rayon = "1.10.0"
 itertools = "0.14.0"
 

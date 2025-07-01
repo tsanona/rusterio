@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![feature(trait_alias)]
+#![feature(new_zeroed_alloc)]
 
 #[macro_use]
 extern crate shrinkwraprs;
@@ -105,26 +106,26 @@ where
     }
 }
 
-fn cast<T: num::NumCast, U: num::NumCast>(val: T) -> Result<U> {
+fn try_cast<T: num::NumCast, U: num::NumCast>(val: T) -> Result<U> {
     num_traits::cast(val).ok_or(RusterioError::Uncastable)
 }
 
-fn cast_tuple<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)> {
-    Ok((cast(tuple.0)?, cast(tuple.1)?))
+fn try_tuple_cast<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U, U)> {
+    Ok((try_cast(tuple.0)?, try_cast(tuple.1)?))
 }
 
-fn swap<T>(tuple: (T, T)) -> (T, T) {
-    (tuple.1, tuple.0)
+fn try_coord_cast<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
+    Ok(Coord::from(try_tuple_cast(coord.x_y())?))
 }
 
 pub struct Indexes {
-    selection: Vec<usize>,
+    selection: Box<[usize]>,
     drop: bool,
 }
 
 impl<const N: usize> From<([usize; N], bool)> for Indexes {
     fn from(value: ([usize; N], bool)) -> Self {
-        let selection = value.0.to_vec();
+        let selection = Box::from(value.0);
         let drop = value.1;
         Indexes { selection, drop }
     }
@@ -140,7 +141,7 @@ impl From<(std::ops::Range<usize>, bool)> for Indexes {
 
 impl<const N: usize> From<[usize; N]> for Indexes {
     fn from(value: [usize; N]) -> Self {
-        let selection = value.to_vec();
+        let selection = Box::from(value);
         Indexes {
             selection,
             drop: false,
@@ -159,10 +160,10 @@ impl From<std::ops::Range<usize>> for Indexes {
 }
 
 impl Indexes {
-    fn indexes_from(self, collection_len: usize) -> Vec<usize> {
+    fn indexes_from(self, collection_len: usize) -> Box<[usize]> {
         let idxs = self.selection;
         if self.drop {
-            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(idxs.into_iter());
+            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(idxs);
             HashSet::from_iter(0..collection_len)
                 .difference(&drop_idxs)
                 .map(|idx| *idx)
@@ -172,18 +173,44 @@ impl Indexes {
         }
     }
 
-    pub fn select_from<I: Clone + Copy>(self, collection: Vec<I>) -> Vec<I> {
+    pub fn select_from<T: Clone + Copy>(self, collection: Vec<T>) -> Box<[T]> {
         self.indexes_from(collection.len())
-            .into_iter()
-            .map(|idx| collection[idx])
+            .iter()
+            .map(|idx| collection[*idx])
             .collect()
     }
 
     pub fn all() -> Self {
         Self {
-            selection: Vec::with_capacity(0),
+            selection: Box::from([]),
             drop: true,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Buffer<T: DataType, const D: usize> {
+    // Row-major ordered
+    data: Box<[T]>,
+    shape: [usize; D],
+}
+
+impl<T: DataType, const D: usize> Buffer<T, D> {
+    pub fn new(shape: [usize; D]) -> Self {
+        let data = unsafe { Box::<[T]>::new_zeroed_slice(shape.iter().product()).assume_init() };
+        Buffer { data, shape }
+    }
+
+    pub fn as_mut_data(&mut self) -> &mut [T] {
+        &mut self.data
+    }
+
+    pub fn to_owned_parts(self) -> (Box<[T]>, [usize; D]) {
+        (self.data, self.shape)
+    }
+
+    pub fn shape(&self) -> [usize; D] {
+        self.shape
     }
 }
 
@@ -203,7 +230,7 @@ mod tests {
             (Indexes::from((0usize..6, false))),
             (Indexes::from(([0usize, 1], false))),
         ];
-        for (res, indexes) in [10, 20, 60].iter().zip(band_indexes) {
+        for (res, indexes) in [10, 20, 60].into_iter().zip(band_indexes) {
             let raster_path = format!("SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:{res}:EPSG_32633");
             let raster = Raster::new::<GdalFile<u16>, _>(raster_path, indexes).unwrap();
             println!("{:?}", raster);
@@ -216,14 +243,13 @@ mod tests {
             .view(None, Indexes::from([0, 1, 2]))
             .unwrap();
         println!("{:?}", sentinel_view);
-        let arr = sentinel_view
+        let clipped_view = sentinel_view
             .clip(ViewBounds::new((0, 0), (1250, 1250)))
-            .unwrap()
-            .as_send_sync()
-            .read()
             .unwrap();
-        println!("{:?}", &arr);
-        ndarray_npy::write_npy("dev/test.npy", &arr).unwrap()
+        println!("{:?}", clipped_view);
+        let buff = clipped_view.read().unwrap();
+        println!("{:?}", &buff.shape());
+        //ndarray_npy::write_npy("dev/test.npy", &arr).unwrap()
     }
 
     #[rstest]

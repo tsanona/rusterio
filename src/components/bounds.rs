@@ -1,10 +1,10 @@
+use num::Integer;
 use std::rc::Rc;
 
 use crate::{
-    cast_tuple,
-    components::transforms::{GeoBandTransform, ViewBandTransform},
+    components::transforms::{GeoBandTransform, ViewReadTransform},
     errors::Result,
-    CrsGeometry,
+    try_coord_cast, try_tuple_cast, CrsGeometry,
 };
 use geo::{AffineOps, Coord, CoordNum, Intersects, MapCoords, Rect};
 
@@ -55,8 +55,30 @@ impl ViewBounds {
         let max = offset + Coord::from(shape);
         Self(Rect::new(offset, max))
     }
+
+    pub fn from<'a>(
+        bounds: &'a GeoBounds,
+        transforms: impl Iterator<Item = &'a GeoBandTransform>,
+    ) -> Result<Self> {
+        let mut read_bounds = transforms
+            .into_iter()
+            .map(|transform| ReadBounds::new(&bounds, transform))
+            .collect::<Result<Vec<ReadBounds>>>()?;
+        let (mut view_pixel_x, mut view_pixel_y) = read_bounds.pop().unwrap().shape();
+        for read_pixel_shape in read_bounds.into_iter().map(|bounds| bounds.shape()) {
+            view_pixel_x = view_pixel_x.lcm(&read_pixel_shape.0);
+            view_pixel_y = view_pixel_y.lcm(&read_pixel_shape.1);
+        }
+        Ok(ViewBounds(Rect::new((0, 0), (view_pixel_x, view_pixel_y))))
+    }
+
+    // (Height, Width)
     pub fn shape(&self) -> (usize, usize) {
         (self.0.height(), self.0.width())
+    }
+
+    pub fn offset(&self) -> (usize, usize) {
+        self.0.min().x_y()
     }
 
     pub fn num_pixels(&self) -> usize {
@@ -79,16 +101,12 @@ impl ViewBounds {
         Err(BoundsError::NoIntersection)
     }
 
-    pub fn to_read_bounds(&self, transform: ViewBandTransform) -> Result<ReadBounds> {
-        let bounds: Rect = self.0.try_map_coords(Self::cast_coord)?;
+    pub fn to_read_bounds(&self, transform: ViewReadTransform) -> Result<ReadBounds> {
+        let bounds: Rect = self.0.try_map_coords(try_coord_cast)?;
         let bounds: Rect<usize> = bounds
             .affine_transform(&transform)
-            .try_map_coords(Self::cast_coord)?;
+            .try_map_coords(try_coord_cast)?;
         Ok(ReadBounds(bounds))
-    }
-
-    fn cast_coord<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
-        Ok(Coord::from(cast_tuple(coord.x_y())?))
     }
 }
 
@@ -99,7 +117,7 @@ impl ReadBounds {
         Ok(Self(
             bounds
                 .affine_transform(transform)
-                .try_map_coords(Self::cast_coord)?,
+                .try_map_coords(try_coord_cast)?,
         ))
     }
 
@@ -110,8 +128,5 @@ impl ReadBounds {
     /// (Height, Width)
     pub fn shape(&self) -> (usize, usize) {
         (self.0.height(), self.0.width())
-    }
-    fn cast_coord<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
-        Ok(Coord::from(cast_tuple(coord.x_y())?))
     }
 }

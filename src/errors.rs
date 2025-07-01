@@ -9,8 +9,6 @@ pub enum RusterioError {
     #[error(transparent)]
     GdalError(#[from] gdal::errors::GdalError),
     #[error(transparent)]
-    NdarrayError(#[from] ndarray::ShapeError),
-    #[error(transparent)]
     RasterizeError(#[from] geo_rasterize::RasterizeError),
     #[error(transparent)]
     GdalEngineError(#[from] crate::components::engines::gdal_engine::GdalEngineError),

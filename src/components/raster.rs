@@ -2,7 +2,6 @@ use geo::{AffineOps, Rect};
 use std::{fmt::Debug, hash::Hash, path::Path, rc::Rc, sync::Arc};
 
 use crate::{
-    cast_tuple,
     components::{
         band::{BandInfo, BandReader},
         bounds::GeoBounds,
@@ -12,7 +11,7 @@ use crate::{
         DataType, Metadata,
     },
     errors::Result,
-    Indexes,
+    try_tuple_cast, Indexes,
 };
 
 #[derive(Debug)]
@@ -53,7 +52,7 @@ impl RasterGroupInfo {
 
 struct RasterGroup<T: DataType> {
     info: RasterGroupInfo,
-    bands: Vec<RasterBand<T>>,
+    bands: Box<[RasterBand<T>]>,
 }
 
 struct RasterBands<T: DataType>(Vec<RasterGroup<T>>);
@@ -116,7 +115,7 @@ impl<T: DataType> Raster<T> {
         let file = F::open(path)?;
 
         let transform = file.transform()?;
-        let pixel_bounds_rect = Rect::new((0., 0.), cast_tuple(file.size())?);
+        let pixel_bounds_rect = Rect::new((0., 0.), try_tuple_cast(file.size())?);
         let geo_bounds_rect = pixel_bounds_rect.affine_transform(&transform);
         let transform = transform.inverse();
 
