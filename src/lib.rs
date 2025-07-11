@@ -22,10 +22,10 @@ pub use engines::gdal_engine;
 extern crate geo_booleanop;
 use geo::{
     bool_ops::BoolOpsNum,
-    proj::{Proj, Transform},
     BooleanOps, BoundingRect, Coord, CoordNum, LineString, MultiPolygon, Polygon, Rect,
 };
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, RectTrait};
+use proj::{Proj, Transform};
 
 use errors::{Result, RusterioError};
 
