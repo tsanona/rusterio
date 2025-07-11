@@ -4,9 +4,9 @@ use std::rc::Rc;
 use crate::{
     components::transforms::{GeoBandTransform, ViewReadTransform},
     errors::Result,
-    try_coord_cast, try_tuple_cast, CrsGeometry,
+    try_coord_cast, CrsGeometry,
 };
-use geo::{AffineOps, Coord, CoordNum, Intersects, MapCoords, Rect};
+use geo::{AffineOps, Coord, Intersects, MapCoords, Rect};
 
 #[derive(thiserror::Error, Debug)]
 pub enum BoundsError {
@@ -46,7 +46,7 @@ impl GeoBounds {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Shrinkwrap)]
 pub struct ViewBounds(Rect<usize>);
 
 impl ViewBounds {
@@ -75,6 +75,14 @@ impl ViewBounds {
     // (Height, Width)
     pub fn shape(&self) -> (usize, usize) {
         (self.0.height(), self.0.width())
+    }
+
+    pub fn top_right(&self) -> (usize, usize) {
+        self.0.max().x_y()
+    }
+
+    pub fn bottom_left(&self) -> (usize, usize) {
+        self.0.min().x_y()
     }
 
     pub fn offset(&self) -> (usize, usize) {
@@ -128,5 +136,10 @@ impl ReadBounds {
     /// (Height, Width)
     pub fn shape(&self) -> (usize, usize) {
         (self.0.height(), self.0.width())
+    }
+
+    pub fn size(&self) -> usize {
+        let (hight, width) = self.shape();
+        hight * width
     }
 }

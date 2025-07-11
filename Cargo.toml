@@ -31,7 +31,8 @@ num-traits = "0.2.19"
 
 [dev-dependencies]
 criterion = { version = "0.6.0", features = ["async", "async_tokio"] }
-ndarray-npy = "0.9.1"
+#ndarray = "0.16.1" # TODO: use ndarray to convert buffer to npy to veryfy visually (or findanother way to save an image)
+#ndarray-npy = "0.9.1"
 rstest = "0.25.0"
 
 [[bench]]

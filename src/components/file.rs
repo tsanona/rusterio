@@ -9,7 +9,7 @@ use crate::{
 pub trait File<T: DataType>: Debug + Sized {
     fn open<P: AsRef<Path>>(path: P) -> Result<Self>;
     fn description(&self) -> Result<String>;
-    fn size(&self) -> (usize, usize);
+    fn shape(&self) -> (usize, usize);
     fn crs(&self) -> Rc<str>;
     fn transform(&self) -> Result<BandGeoTransform>;
     fn num_bands(&self) -> usize;

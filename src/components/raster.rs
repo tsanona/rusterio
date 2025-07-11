@@ -72,11 +72,6 @@ impl<T: DataType> RasterBands<T> {
         self.0.iter().flat_map(|group| group.bands.iter())
     }
 
-    fn num_bands(&self) -> usize {
-        self.groups()
-            .fold(0, |sum, RasterGroup { info: _, bands }| sum + bands.len())
-    }
-
     fn append(&mut self, other: &mut RasterBands<T>) {
         self.0.append(other.0.as_mut())
     }
@@ -115,7 +110,7 @@ impl<T: DataType> Raster<T> {
         let file = F::open(path)?;
 
         let transform = file.transform()?;
-        let pixel_bounds_rect = Rect::new((0., 0.), try_tuple_cast(file.size())?);
+        let pixel_bounds_rect = Rect::new((0., 0.), try_tuple_cast(file.shape())?);
         let geo_bounds_rect = pixel_bounds_rect.affine_transform(&transform);
         let transform = transform.inverse();
 

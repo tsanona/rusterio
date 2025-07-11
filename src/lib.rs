@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-#![feature(trait_alias)]
-#![feature(new_zeroed_alloc)]
-
 #[macro_use]
 extern crate shrinkwraprs;
 
@@ -21,8 +17,8 @@ pub use engines::gdal_engine;
 
 extern crate geo_booleanop;
 use geo::{
-    bool_ops::BoolOpsNum,
-    BooleanOps, BoundingRect, Coord, CoordNum, LineString, MultiPolygon, Polygon, Rect,
+    bool_ops::BoolOpsNum, BooleanOps, BoundingRect, Coord, CoordNum, LineString, MultiPolygon,
+    Polygon, Rect,
 };
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, RectTrait};
 use proj::{Proj, Transform};
@@ -197,7 +193,7 @@ pub struct Buffer<T: DataType, const D: usize> {
 
 impl<T: DataType, const D: usize> Buffer<T, D> {
     pub fn new(shape: [usize; D]) -> Self {
-        let data = unsafe { Box::<[T]>::new_zeroed_slice(shape.iter().product()).assume_init() };
+        let data = Vec::with_capacity(shape.iter().product()).into_boxed_slice();
         Buffer { data, shape }
     }
 
@@ -240,7 +236,7 @@ mod tests {
         let sentinel_raster = Raster::stack(sentinel_rasters).unwrap();
         println!("{:?}", sentinel_raster);
         let sentinel_view = sentinel_raster
-            .view(None, Indexes::from([0, 1, 2]))
+            .view(None, Indexes::from([0, 3, 10]))
             .unwrap();
         println!("{:?}", sentinel_view);
         let clipped_view = sentinel_view

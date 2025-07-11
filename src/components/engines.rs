@@ -42,11 +42,6 @@ pub mod gdal_engine {
     pub trait GdalDataType: DataType + GdalType {}
     impl GdalDataType for u16 {}
 
-    trait GdalDriver: Debug {
-        fn band_name(raster_band: gdal::raster::RasterBand) -> String;
-        fn open<P: AsRef<Path>>(path: P) -> Result<Raster<impl GdalDataType>>;
-    }
-
     pub fn open<T: GdalDataType, P: AsRef<Path>>(path: P) -> Result<Raster<T>> {
         if let Ok(raster) = Raster::new::<GdalFile<T>, _>(&path, Indexes::all()) {
             return Ok(raster);
@@ -99,7 +94,7 @@ pub mod gdal_engine {
         fn description(&self) -> Result<String> {
             Ok(self.dataset.description()?)
         }
-        fn size(&self) -> (usize, usize) {
+        fn shape(&self) -> (usize, usize) {
             self.dataset.raster_size()
         }
         fn crs(&self) -> Rc<str> {
@@ -158,14 +153,14 @@ pub mod gdal_engine {
         fn read_into_slice(&self, bounds: ReadBounds, slice: &mut [T]) -> Result<()> {
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(self.1)?;
-            let size = bounds.shape();
+            let window_shape = bounds.shape();
             let offset = try_tuple_cast(bounds.offset())?;
             /* if T::gdal_ordinal() != rasterband.band_type() as u32 {
                 Err(gdal::errors::GdalError::BadArgument(
                     "result array type must match band data types".to_string(),
                 ))?
             } */
-            Ok(rasterband.read_into_slice::<T>(offset, size, size, slice, None)?)
+            Ok(rasterband.read_into_slice::<T>(offset, window_shape, window_shape, slice, None)?)
         }
     }
 }

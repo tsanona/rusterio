@@ -18,7 +18,11 @@ use crate::{
 ///
 /// [View][crate::components::view::View], [GeoBounds][crate::components::bounds::GeoBounds]
 #[derive(Shrinkwrap, Debug)]
-pub struct ViewGeoTransform(#[shrinkwrap(main_field)] AffineTransform, Rc<str>);
+pub struct ViewGeoTransform {
+    #[shrinkwrap(main_field)]
+    transform: AffineTransform,
+    crs: Rc<str>,
+}
 
 impl ViewGeoTransform {
     pub fn new<'a>(view_bounds: &ViewBounds, geo_bounds: &GeoBounds) -> Result<Self> {
@@ -31,29 +35,49 @@ impl ViewGeoTransform {
             geo_bounds.geometry.height() / view_pixel_shape.1,
             geo_bounds.geometry.min().y,
         );
-        Ok(Self(transform, Rc::clone(&geo_bounds.crs)))
+        Ok(Self {
+            transform,
+            crs: Rc::clone(&geo_bounds.crs),
+        })
     }
 }
 
 #[derive(Shrinkwrap, Debug)]
-pub struct BandGeoTransform(#[shrinkwrap(main_field)] AffineTransform, Rc<str>);
+pub struct BandGeoTransform {
+    #[shrinkwrap(main_field)]
+    transform: AffineTransform,
+    crs: Rc<str>,
+}
 
 impl BandGeoTransform {
     pub fn new(a: f64, b: f64, xoff: f64, d: f64, e: f64, yoff: f64, crs: Rc<str>) -> Self {
-        Self(AffineTransform::new(a, b, xoff, d, e, yoff), crs)
+        Self {
+            transform: AffineTransform::new(a, b, xoff, d, e, yoff),
+            crs,
+        }
     }
 
     pub fn inverse(&self) -> GeoBandTransform {
-        GeoBandTransform(self.0.inverse().unwrap(), Rc::clone(&self.1))
+        GeoBandTransform {
+            transform: self.transform.inverse().unwrap(),
+            crs: Rc::clone(&self.crs),
+        }
     }
 }
 
 #[derive(Shrinkwrap, Debug)]
-pub struct GeoBandTransform(#[shrinkwrap(main_field)] AffineTransform, Rc<str>);
+pub struct GeoBandTransform {
+    #[shrinkwrap(main_field)]
+    transform: AffineTransform,
+    crs: Rc<str>,
+}
 
 impl GeoBandTransform {
     pub fn inverse(&self) -> BandGeoTransform {
-        BandGeoTransform(self.0.inverse().unwrap(), Rc::clone(&self.1))
+        BandGeoTransform {
+            transform: self.transform.inverse().unwrap(),
+            crs: Rc::clone(&self.crs),
+        }
     }
 }
 
@@ -65,6 +89,7 @@ impl ViewReadTransform {
         view_geo_transform: &ViewGeoTransform,
         geo_band_transform: &GeoBandTransform,
     ) -> Self {
+        assert_eq!(view_geo_transform.crs, geo_band_transform.crs);
         Self(view_geo_transform.compose(geo_band_transform))
     }
 
