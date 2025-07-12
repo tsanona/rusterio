@@ -191,13 +191,13 @@ impl<T: DataType> SendSyncView<T> {
                     }
                     (read_shape_x, read_shape_y) => {
                         let read_buff_len = read_bounds.size();
-                        let mut read_buff = Vec::with_capacity(read_buff_len).into_boxed_slice();
+                        let mut read_buff = unsafe { Box::new_zeroed_slice(read_buff_len).assume_init() };
                         read_band
                             .reader
                             .read_into_slice(read_bounds, &mut read_buff)?;
 
                         let (ratio_x, ratio_y) = read_band.transform.ratio();
-
+                        
                         let realtive_bounds = self.bounds.map_coords(|Coord { x, y }| Coord {
                             x: x % ratio_x,
                             y: y % ratio_y,

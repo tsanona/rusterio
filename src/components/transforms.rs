@@ -106,6 +106,7 @@ impl ViewReadTransform {
     /// A.k.a the shape of the chunk of pixels in [ViewBounds] a pixel in [ReadBounds] fills up.
     ///
     pub fn ratio(&self) -> (usize, usize) {
-        (self.a().abs() as usize, self.e().abs() as usize)
+        let inv = self.inverse().unwrap();
+        (inv.a().abs() as usize, inv.e().abs() as usize)
     }
 }

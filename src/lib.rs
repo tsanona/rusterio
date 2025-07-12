@@ -1,3 +1,5 @@
+#![feature(new_zeroed_alloc)]
+
 #[macro_use]
 extern crate shrinkwraprs;
 
@@ -193,7 +195,7 @@ pub struct Buffer<T: DataType, const D: usize> {
 
 impl<T: DataType, const D: usize> Buffer<T, D> {
     pub fn new(shape: [usize; D]) -> Self {
-        let data = Vec::with_capacity(shape.iter().product()).into_boxed_slice();
+        let data = unsafe { Box::new_zeroed_slice(shape.iter().product()).assume_init() };
         Buffer { data, shape }
     }
 
@@ -236,7 +238,7 @@ mod tests {
         let sentinel_raster = Raster::stack(sentinel_rasters).unwrap();
         println!("{:?}", sentinel_raster);
         let sentinel_view = sentinel_raster
-            .view(None, Indexes::from([0, 3, 10]))
+            .view(None, Indexes::from([0, 4, 10]))
             .unwrap();
         println!("{:?}", sentinel_view);
         let clipped_view = sentinel_view
@@ -244,7 +246,7 @@ mod tests {
             .unwrap();
         println!("{:?}", clipped_view);
         let buff = clipped_view.read().unwrap();
-        println!("{:?}", &buff.shape());
+        println!("{:?}", &buff.data);
         //ndarray_npy::write_npy("dev/test.npy", &arr).unwrap()
     }
 
