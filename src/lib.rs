@@ -23,6 +23,7 @@ use geo::{
     Polygon, Rect,
 };
 use geo_traits::{CoordTrait, GeometryTrait, GeometryType, RectTrait};
+use itertools::Itertools;
 use proj::{Proj, Transform};
 
 use errors::{Result, RusterioError};
@@ -164,6 +165,7 @@ impl Indexes {
             let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(idxs);
             HashSet::from_iter(0..collection_len)
                 .difference(&drop_idxs)
+                .sorted()
                 .map(|idx| *idx)
                 .collect()
         } else {

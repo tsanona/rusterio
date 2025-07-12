@@ -1,6 +1,7 @@
 use geo::{Coord, MapCoords};
 use rayon::prelude::*;
 use std::{collections::HashSet, fmt::Debug, rc::Rc, sync::Arc};
+use log::info;
 
 use crate::{
     components::{
@@ -75,6 +76,12 @@ impl<T> View<T>
 where
     T: DataType,
 {
+    fn init(bounds: ViewBounds, bands: Rc<[ViewBand<T>]>) -> Self {
+        let view = Self {bounds, bands};
+        info!("new {view:?}");
+        view
+    }
+
     pub fn new(
         bounds: GeoBounds,
         selected_bands: Box<[(&RasterGroupInfo, &RasterBand<T>)]>,
@@ -94,16 +101,13 @@ where
             let transform = ViewReadTransform::new(&view_geo_transform, &group_info.transform);
             ViewBand::from((transform, *raster_band))
         }));
-        Ok(Self {
-            bounds: view_bounds,
-            bands,
-        })
+        Ok(Self::init(view_bounds, bands))
     }
 
     pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
         let bounds = self.bounds.intersection(&bounds)?;
         let bands = Rc::clone(&self.bands);
-        Ok(Self { bounds, bands })
+        Ok(Self::init(bounds, bands))
     }
 
     fn par_bands(&self) -> Box<[SendSyncBand<T>]> {
@@ -112,20 +116,6 @@ where
             .map(|view_band| SendSyncBand::from(view_band))
             .collect()
     }
-
-    /* fn index_slice(
-        index: usize,
-        bounds: (usize, usize),
-        ratio: (usize, usize),
-        read_max: (usize, usize),
-    ) -> (core::ops::Range<usize>, core::ops::Range<usize>) {
-        let (bounds_y, bounds_x) = bounds;
-        let (ratio_x, ratio_y) = ratio;
-        let (x, y) = (bounds_x - index % bounds_x, bounds_y - index / bounds_y);
-        let x_slice = ((x - 1) * ratio_x)..(x * ratio_x).min(read_max.0);
-        let y_slice = ((y - 1) * ratio_y)..(y * ratio_y).min(read_max.1);
-        (x_slice, y_slice)
-    } */
 
     /// Array shape (C, H, W)
     pub fn shape(&self) -> (usize, usize, usize) {
@@ -157,20 +147,6 @@ impl<T: DataType> SendSyncView<T> {
         Ok(Self { bounds, bands })
     }
 
-    /* fn index_slice(
-        index: usize,
-        bounds: (usize, usize),
-        ratio: (usize, usize),
-        read_max: (usize, usize),
-    ) -> (core::ops::Range<usize>, core::ops::Range<usize>) {
-        let (bounds_y, bounds_x) = bounds;
-        let (ratio_x, ratio_y) = ratio;
-        let (x, y) = (bounds_x - index % bounds_x, bounds_y - index / bounds_y);
-        let x_slice = ((x - 1) * ratio_x)..(x * ratio_x).min(read_max.0);
-        let y_slice = ((y - 1) * ratio_y)..(y * ratio_y).min(read_max.1);
-        (x_slice, y_slice)
-    } */
-
     pub fn read(&self) -> Result<Buffer<T, 3>> {
         let mut buff = Buffer::new(self.array_shape());
         buff.as_mut_data()
@@ -178,6 +154,7 @@ impl<T: DataType> SendSyncView<T> {
             .zip(self.bands.into_par_iter())
             .map(|(band_buff, read_band)| {
                 let read_bounds = self.bounds.to_read_bounds(read_band.transform)?;
+                info!("reading {:?} as {:?}", self.bounds, read_bounds);
                 match read_bounds.shape() {
                     (1, 1) => {
                         let mut read_buff = [T::zero()];
@@ -187,14 +164,14 @@ impl<T: DataType> SendSyncView<T> {
                         Ok::<_, RusterioError>(band_buff.fill(read_buff[0]))
                     }
                     read_shape if read_shape.eq(&self.bounds.shape()) => {
+                        // TODO: chunk!
                         Ok(read_band.reader.read_into_slice(read_bounds, band_buff)?)
                     }
                     (read_shape_x, read_shape_y) => {
                         let read_buff_len = read_bounds.size();
                         let mut read_buff = unsafe { Box::new_zeroed_slice(read_buff_len).assume_init() };
-                        read_band
-                            .reader
-                            .read_into_slice(read_bounds, &mut read_buff)?;
+                        read_band.reader
+                        .read_into_slice(read_bounds, &mut read_buff)?;
 
                         let (ratio_x, ratio_y) = read_band.transform.ratio();
                         

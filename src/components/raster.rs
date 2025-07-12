@@ -1,4 +1,5 @@
 use geo::{AffineOps, Rect};
+use log::info;
 use std::{fmt::Debug, hash::Hash, path::Path, rc::Rc, sync::Arc};
 
 use crate::{
@@ -98,14 +99,20 @@ impl<T: DataType> Debug for Raster<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let f = &mut f.debug_struct("Raster");
         let bands: Vec<String> = self.bands.iter().map(|band| band.info.name()).collect();
-        f.field("geo rect", &(self.bounds.geometry))
-            .field("geo shape", &(self.bounds.shape()))
+        f.field("geo_bounds", &(self.bounds.geometry))
+            .field("geo_shape", &(self.bounds.shape()))
             .field("bands", &bands)
             .finish()
     }
 }
 
 impl<T: DataType> Raster<T> {
+    fn init(bounds: GeoBounds, bands: RasterBands<T>) -> Self {
+        let raster = Self {bounds, bands};
+        info!("new {raster:?}");
+        raster
+    }
+
     pub fn new<F: File<T>, P: AsRef<Path>>(path: P, band_indexes: Indexes) -> Result<Self> {
         let file = F::open(path)?;
 
@@ -131,8 +138,8 @@ impl<T: DataType> Raster<T> {
         });
 
         //TODO: assert!(bands.datatype == T)
-
-        Ok(Self { bounds, bands })
+        
+        Ok(Self::init(bounds, bands))
     }
 
     pub fn stack(rasters: Vec<Raster<T>>) -> Result<Raster<T>> {
@@ -144,10 +151,7 @@ impl<T: DataType> Raster<T> {
             stack_geo_bounds = stack_geo_bounds.intersection(&geo_bounds)?;
             stack_bands.append(&mut bands);
         }
-        Ok(Raster {
-            bounds: stack_geo_bounds,
-            bands: stack_bands,
-        })
+        Ok(Self::init(stack_geo_bounds, stack_bands))
     }
 
     pub fn view(&self, bounds: Option<GeoBounds>, band_indexes: Indexes) -> Result<View<T>> {

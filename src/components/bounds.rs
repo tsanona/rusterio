@@ -118,6 +118,7 @@ impl ViewBounds {
     }
 }
 
+#[derive(Debug)]
 pub struct ReadBounds(Rect<usize>);
 
 impl ReadBounds {
