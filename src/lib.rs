@@ -2,108 +2,70 @@
 
 #[macro_use]
 extern crate shrinkwraprs;
+extern crate geo_booleanop;
 
+mod ambassador_remote_traits;
+mod buffer;
 mod components;
+mod crs_geo;
 mod errors;
+mod indexes;
+mod intersection;
 
-use std::{collections::HashSet, fmt::Debug, hash::RandomState, rc::Rc};
+use geo::{Coord, CoordNum};
+use geo_traits::CoordTrait;
 
+pub use buffer::Buffer;
 pub use components::{
-    bounds::ViewBounds,
-    engines,
+    bounds::{Bounds, ViewBounds},
+    engines::gdal_engine,
     raster::Raster,
     view::{SendSyncView, View},
     DataType,
 };
-pub use engines::gdal_engine;
-
-extern crate geo_booleanop;
-use geo::{
-    bool_ops::BoolOpsNum, BooleanOps, BoundingRect, Coord, CoordNum, LineString, MultiPolygon,
-    Polygon, Rect,
-};
-use geo_traits::{CoordTrait, GeometryTrait, GeometryType, RectTrait};
-use itertools::Itertools;
-use proj::{Proj, Transform};
-
+pub use crs_geo::CrsGeometry;
 use errors::{Result, RusterioError};
+pub use indexes::Indexes;
 
-#[derive(Shrinkwrap, Debug, Clone)]
-pub struct CrsGeometry<G: GeometryTrait> {
-    crs: Rc<str>,
-    #[shrinkwrap(main_field)]
-    geometry: G,
-}
-
-impl<G: GeometryTrait + Transform<G::T, Output = G>> CrsGeometry<G>
-where
-    G::T: CoordNum + Debug,
-{
-    fn with_crs(mut self, crs: &str) -> Result<Self> {
-        let proj = Proj::new_known_crs(self.crs.as_ref(), crs, None)?;
-        self.crs = Rc::from(crs);
-        self.geometry.transform(&proj)?;
-        Ok(self)
-    }
-
-    fn projected_geometry(&self, crs: &str) -> Result<G> {
-        let proj = Proj::new_known_crs(self.crs.as_ref(), crs, None)?;
-        self.geometry
-            .transformed(&proj)
-            .map_err(RusterioError::ProjError)
-    }
-}
-
-impl<G: GeometryTrait + BoundingRect<G::T>> CrsGeometry<G>
-where
-    G::T: CoordNum + Debug,
-{
-    fn bounding_rect(&self) -> Option<CrsGeometry<Rect<G::T>>> {
-        let geometry = self.geometry.bounding_rect().into()?;
-        Some(CrsGeometry {
-            crs: Rc::clone(&self.crs),
-            geometry,
-        })
-    }
-}
-
-impl<'a, G: GeometryTrait + Transform<G::T, Output = G>> CrsGeometry<G>
-where
-    G::T: CoordNum + Debug + BoolOpsNum + 'a,
-{
-    fn intersection(&self, rhs: &Self) -> Result<CrsGeometry<MultiPolygon<G::T>>>
-    where
-        G: Clone,
+trait CoordUtils: CoordTrait + Sized {
+    /*  fn map<NT: CoordNum>(&self, func: impl Fn(Self::T, Self::T) -> Coord<NT>) -> Coord<NT>
+    where Self::T: CoordNum
     {
-        let rhs_geometry = if rhs.crs.ne(&self.crs) {
-            &rhs.projected_geometry(&self.crs)?
-        } else {
-            &rhs.geometry
-        };
-        let rhs_polygon: Polygon<G::T> = match rhs_geometry.as_type() {
-            GeometryType::Rect(rect) => {
-                let rect: Rect<G::T> = Rect::new(rect.min().x_y(), rect.max().x_y());
-                let rect_coord: Vec<Coord<G::T>> =
-                    rect.to_lines().into_iter().map(|line| line.start).collect();
-                Polygon::new(LineString::from(rect_coord), vec![])
-            }
-            _ => unimplemented!(),
-        };
-        let lhs_polygon: Polygon<G::T> = match self.geometry.as_type() {
-            GeometryType::Rect(rect) => {
-                let rect: Rect<G::T> = Rect::new(rect.min().x_y(), rect.max().x_y());
-                let rect_coord: Vec<Coord<G::T>> =
-                    rect.to_lines().into_iter().map(|line| line.start).collect();
-                Polygon::new(LineString::from(rect_coord), vec![])
-            }
-            _ => unimplemented!(),
-        };
-        Ok(CrsGeometry {
-            crs: Rc::clone(&self.crs),
-            geometry: lhs_polygon.intersection(&rhs_polygon),
+        func(self.x(), self.y())
+    } */
+
+    fn map_each<NT: CoordNum>(&self, func: impl Fn(Self::T) -> NT) -> Coord<NT>
+    where
+        Self::T: CoordNum,
+    {
+        Coord {
+            x: func(self.x()),
+            y: func(self.y()),
+        }
+    }
+
+    fn try_cast<NT: CoordNum + num::NumCast>(self) -> Result<Coord<NT>>
+    where
+        Self::T: num::NumCast,
+    {
+        Ok(Coord {
+            x: try_cast(self.x())?,
+            y: try_cast(self.y())?,
         })
     }
+
+    fn operate<NT: CoordNum>(&self, rhs: &Self, func: impl Fn(Self::T, Self::T) -> NT) -> Coord<NT>
+    where
+        Self::T: CoordNum,
+    {
+        Coord {
+            x: func(self.x(), rhs.x()),
+            y: func(self.y(), rhs.y()),
+        }
+    }
 }
+
+impl<T: CoordNum> CoordUtils for Coord<T> {}
 
 fn try_cast<T: num::NumCast, U: num::NumCast>(val: T) -> Result<U> {
     num_traits::cast(val).ok_or(RusterioError::Uncastable)
@@ -113,116 +75,25 @@ fn try_tuple_cast<T: num::NumCast, U: num::NumCast>(tuple: (T, T)) -> Result<(U,
     Ok((try_cast(tuple.0)?, try_cast(tuple.1)?))
 }
 
-fn try_coord_cast<T: CoordNum, U: CoordNum>(coord: Coord<T>) -> Result<Coord<U>> {
-    Ok(Coord::from(try_tuple_cast(coord.x_y())?))
-}
-
-pub struct Indexes {
-    selection: Box<[usize]>,
-    drop: bool,
-}
-
-impl<const N: usize> From<([usize; N], bool)> for Indexes {
-    fn from(value: ([usize; N], bool)) -> Self {
-        let selection = Box::from(value.0);
-        let drop = value.1;
-        Indexes { selection, drop }
-    }
-}
-
-impl From<(std::ops::Range<usize>, bool)> for Indexes {
-    fn from(value: (std::ops::Range<usize>, bool)) -> Self {
-        let selection = value.0.collect();
-        let drop = value.1;
-        Indexes { selection, drop }
-    }
-}
-
-impl<const N: usize> From<[usize; N]> for Indexes {
-    fn from(value: [usize; N]) -> Self {
-        let selection = Box::from(value);
-        Indexes {
-            selection,
-            drop: false,
-        }
-    }
-}
-
-impl From<std::ops::Range<usize>> for Indexes {
-    fn from(value: std::ops::Range<usize>) -> Self {
-        let selection = value.collect();
-        Indexes {
-            selection,
-            drop: false,
-        }
-    }
-}
-
-impl Indexes {
-    fn indexes_from(self, collection_len: usize) -> Box<[usize]> {
-        let idxs = self.selection;
-        if self.drop {
-            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(idxs);
-            HashSet::from_iter(0..collection_len)
-                .difference(&drop_idxs)
-                .sorted()
-                .map(|idx| *idx)
-                .collect()
-        } else {
-            idxs
-        }
-    }
-
-    pub fn select_from<T: Clone + Copy>(self, collection: Vec<T>) -> Box<[T]> {
-        self.indexes_from(collection.len())
-            .iter()
-            .map(|idx| collection[*idx])
-            .collect()
-    }
-
-    pub fn all() -> Self {
-        Self {
-            selection: Box::from([]),
-            drop: true,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Buffer<T: DataType, const D: usize> {
-    // Row-major ordered
-    data: Box<[T]>,
-    shape: [usize; D],
-}
-
-impl<T: DataType, const D: usize> Buffer<T, D> {
-    pub fn new(shape: [usize; D]) -> Self {
-        let data = unsafe { Box::new_zeroed_slice(shape.iter().product()).assume_init() };
-        Buffer { data, shape }
-    }
-
-    pub fn as_mut_data(&mut self) -> &mut [T] {
-        &mut self.data
-    }
-
-    pub fn to_owned_parts(self) -> (Box<[T]>, [usize; D]) {
-        (self.data, self.shape)
-    }
-
-    pub fn shape(&self) -> [usize; D] {
-        self.shape
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
     use crate::components::{bounds::ViewBounds, engines::gdal_engine::GdalFile};
 
     use super::*;
+    use log::info;
+    use ndarray::Axis;
     use rstest::rstest;
 
+    const SENTINEL2_FILE_NAME: &str =
+        "S2B_MSIL2A_20241206T093309_N0511_R136_T33PTM_20241206T115919";
+    const SENTINEL2_FILE_PATH: fn() -> String = || format!("data/{SENTINEL2_FILE_NAME}.SAFE.zip");
+    const SENTINEL2_RESOLUTION_GROUP_PATH: fn(i32) -> String = |resolution| {
+        format!("SENTINEL2_L2A:/vsizip/data/{SENTINEL2_FILE_NAME}.SAFE.zip/{SENTINEL2_FILE_NAME}.SAFE/MTD_MSIL2A.xml:{resolution}:EPSG_32633")
+    };
+
     #[rstest]
+    #[test_log::test]
     fn base_use() {
         let mut sentinel_rasters = Vec::new();
         let band_indexes = [
@@ -231,42 +102,107 @@ mod tests {
             (Indexes::from(([0usize, 1], false))),
         ];
         for (res, indexes) in [10, 20, 60].into_iter().zip(band_indexes) {
-            let raster_path = format!("SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:{res}:EPSG_32633");
+            let raster_path = SENTINEL2_RESOLUTION_GROUP_PATH(res);
             let raster = Raster::new::<GdalFile<u16>, _>(raster_path, indexes).unwrap();
-            println!("{:?}", raster);
             sentinel_rasters.push(raster);
         }
 
         let sentinel_raster = Raster::stack(sentinel_rasters).unwrap();
-        println!("{:?}", sentinel_raster);
         let sentinel_view = sentinel_raster
-            .view(None, Indexes::from([0, 4, 10]))
+            .view(None, Indexes::from([0, 4, 10])) // all different resolutions
             .unwrap();
-        println!("{:?}", sentinel_view);
         let clipped_view = sentinel_view
-            .clip(ViewBounds::new((0, 0), (1250, 1250)))
+            .clip(ViewBounds::new((0, 0), (125, 125)))
             .unwrap();
-        println!("{:?}", clipped_view);
         let buff = clipped_view.read().unwrap();
-        println!("{:?}", &buff.data);
+        info!(
+            "data len: {:?}\ndata shape: {:?}\nmatches {:}",
+            &buff.len(),
+            &buff.shape(),
+            &buff.shape().iter().product::<usize>() == &buff.len()
+        );
+        let (buff_data, _) = buff.to_owned_parts();
+        let buff_vec = Vec::from(buff_data);
+        info!("as vector: {:?}", buff_vec.len())
         //ndarray_npy::write_npy("dev/test.npy", &arr).unwrap()
     }
 
     #[rstest]
+    #[test_log::test]
     fn works_with_full_sentinel2() {
-        let sentinel_raster = gdal_engine::open::<u16, _>(
-            "data/S2B_MSIL2A_20241206T093309_N0511_R136_T33PTM_20241206T115919.SAFE.zip",
-        )
-        .unwrap();
-        println!("{:#?}", sentinel_raster);
+        let sentinel_raster = gdal_engine::open::<u16, _>(SENTINEL2_FILE_PATH()).unwrap();
+        info!("{:#?}", sentinel_raster);
     }
 
     #[rstest]
+    #[test_log::test]
     fn works_with_partial_sentinel2() {
+        let sentinel_raster =
+            gdal_engine::open::<u16, _>(SENTINEL2_RESOLUTION_GROUP_PATH(10)).unwrap();
+        info!("{:#?}", sentinel_raster);
+    }
+
+    #[rstest]
+    #[test_log::test]
+    fn convert_to_ndarray() {
+        use ndarray;
+
+        let sentinel_raster =
+            gdal_engine::open::<u16, _>(SENTINEL2_RESOLUTION_GROUP_PATH(10)).unwrap();
+
+        let (data, shape) = sentinel_raster
+            .view(None, Indexes::all())
+            .unwrap()
+            .clip(ViewBounds::new((0, 0), (125, 250)))
+            .unwrap()
+            .read()
+            .unwrap()
+            .to_owned_parts();
+
+        let arr = ndarray::Array3::from_shape_vec(shape, data.to_vec()).unwrap();
+        info!("as ndarray: {:?}", arr)
+    }
+
+    #[rstest]
+    #[test_log::test]
+    fn as_rgb_image() {
+        use image;
+        //use ndarray::s;
+
         let sentinel_raster = gdal_engine::open::<u16, _>(
-           "SENTINEL2_L2A:/vsizip/data/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE.zip/S2B_MSIL2A_20241126T093239_N0511_R136_T33PTM_20241126T120342.SAFE/MTD_MSIL2A.xml:10:EPSG_32633",
+            // SENTINEL2_RESOLUTION_GROUP_PATH(10)
+            SENTINEL2_FILE_PATH(),
         )
         .unwrap();
-        println!("{:#?}", sentinel_raster);
+
+        let view = sentinel_raster
+            .view(None, Indexes::from([0, 1, 2]))
+            .unwrap()
+            .clip(ViewBounds::new((0, 0), (500, 1000)))
+            .unwrap();
+
+        let (data, shape) = view.read().unwrap().to_owned_parts();
+        let shape = [shape[0], shape[2], shape[1]];
+        let arr = ndarray::Array3::from_shape_vec(shape, data.to_vec()).unwrap();
+        info!("as ndarray: {:?}", arr.dim());
+        //info!("as ndarray: {:?}", arr.slice(s![1, 10975.., 10975..]));
+
+        let arr = arr.permuted_axes([1, 2, 0]); // rearrange axes to (W, H, C)
+        let arr = arr.mapv(u32::from);
+        let arr_max = arr
+            .map_axis(Axis(0), |axis| *axis.iter().max().unwrap())
+            .map_axis(Axis(0), |axis| *axis.iter().max().unwrap());
+        let broadcasted_arr_max = arr_max.broadcast(arr.dim()).unwrap();
+
+        let arr = ((arr * 255) / broadcasted_arr_max).mapv(|val| val as u8);
+        info!("as ndarray: {:?}", arr.dim());
+        let _ = image::RgbImage::from_raw(
+            arr.dim().0 as u32,
+            arr.dim().1 as u32,
+            arr.into_iter().collect(),
+        )
+        .unwrap()
+        .save(format!("data/{SENTINEL2_FILE_NAME}.png"))
+        .unwrap();
     }
 }

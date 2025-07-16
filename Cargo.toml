@@ -28,12 +28,14 @@ log = "0.4.27"
 shrinkwraprs = "0.3.0"
 either = "1.15.0"
 num-traits = "0.2.19"
+ambassador = "0.4.1"
 
 [dev-dependencies]
 criterion = { version = "0.6.0", features = ["async", "async_tokio"] }
-#ndarray = "0.16.1" # TODO: use ndarray to convert buffer to npy to veryfy visually (or findanother way to save an image)
-#ndarray-npy = "0.9.1"
+ndarray = "0.16.1"
+image = "0.25.6"
 rstest = "0.25.0"
+test-log = "0.2.18"
 
 [[bench]]
 name = "benchmarks"

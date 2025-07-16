@@ -1,17 +1,16 @@
-use std::{collections::HashMap, fmt::Debug, path::Path, rc::Rc};
+use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{raster::RasterBand, transforms::BandGeoTransform, DataType},
+    components::{bounds::GeoBounds, raster::RasterBand, transforms::ReadGeoTransform, DataType},
     errors::Result,
-    Indexes,
+    indexes::Indexes,
 };
 
 pub trait File<T: DataType>: Debug + Sized {
     fn open<P: AsRef<Path>>(path: P) -> Result<Self>;
     fn description(&self) -> Result<String>;
-    fn shape(&self) -> (usize, usize);
-    fn crs(&self) -> Rc<str>;
-    fn transform(&self) -> Result<BandGeoTransform>;
+    fn geo_bounds(&self) -> Result<GeoBounds>;
+    fn transform(&self) -> Result<ReadGeoTransform>;
     fn num_bands(&self) -> usize;
     fn band(&self, index: usize) -> Result<RasterBand<T>>;
     fn bands(&self, indexes: Indexes) -> Result<Box<[RasterBand<T>]>> {

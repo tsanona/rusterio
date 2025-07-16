@@ -1,18 +1,18 @@
-use geo::{AffineOps, Rect};
 use log::info;
 use std::{fmt::Debug, hash::Hash, path::Path, rc::Rc, sync::Arc};
 
 use crate::{
     components::{
         band::{BandInfo, BandReader},
-        bounds::GeoBounds,
+        bounds::{Bounds, GeoBounds},
         file::File,
-        transforms::GeoBandTransform,
+        transforms::GeoReadTransform,
         view::View,
         DataType, Metadata,
     },
     errors::Result,
-    try_tuple_cast, Indexes,
+    intersection::Intersection,
+    Indexes,
 };
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub struct RasterBand<T: DataType> {
 #[derive(Debug)]
 pub struct RasterGroupInfo {
     pub description: String,
-    pub transform: GeoBandTransform,
+    pub transform: GeoReadTransform,
     pub metadata: Metadata,
 }
 
@@ -99,7 +99,7 @@ impl<T: DataType> Debug for Raster<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let f = &mut f.debug_struct("Raster");
         let bands: Vec<String> = self.bands.iter().map(|band| band.info.name()).collect();
-        f.field("geo_bounds", &(self.bounds.geometry))
+        f.field("geo_bounds", &(self.bounds))
             .field("geo_shape", &(self.bounds.shape()))
             .field("bands", &bands)
             .finish()
@@ -108,7 +108,7 @@ impl<T: DataType> Debug for Raster<T> {
 
 impl<T: DataType> Raster<T> {
     fn init(bounds: GeoBounds, bands: RasterBands<T>) -> Self {
-        let raster = Self {bounds, bands};
+        let raster = Self { bounds, bands };
         info!("new {raster:?}");
         raster
     }
@@ -117,13 +117,8 @@ impl<T: DataType> Raster<T> {
         let file = F::open(path)?;
 
         let transform = file.transform()?;
-        let pixel_bounds_rect = Rect::new((0., 0.), try_tuple_cast(file.shape())?);
-        let geo_bounds_rect = pixel_bounds_rect.affine_transform(&transform);
         let transform = transform.inverse();
-
-        let crs = file.crs();
-        let bounds = GeoBounds::from((crs, geo_bounds_rect));
-
+        let bounds = file.geo_bounds()?;
         let description = file.description()?;
         let metadata = file.metadata();
         let info = RasterGroupInfo {
@@ -138,7 +133,7 @@ impl<T: DataType> Raster<T> {
         });
 
         //TODO: assert!(bands.datatype == T)
-        
+
         Ok(Self::init(bounds, bands))
     }
 

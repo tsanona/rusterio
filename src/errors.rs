@@ -2,18 +2,19 @@ pub type Result<T> = std::result::Result<T, RusterioError>;
 
 #[derive(thiserror::Error, Debug)]
 pub enum RusterioError {
-    #[error(transparent)]
-    ProjError(#[from] proj::ProjError),
-    #[error(transparent)]
-    ProjCreateError(#[from] proj::ProjCreateError),
+    /// lib errors
     #[error(transparent)]
     GdalError(#[from] gdal::errors::GdalError),
-    /* #[error(transparent)]
-    RasterizeError(#[from] geo_rasterize::RasterizeError), */
+    #[error(transparent)]
+    /// crate mod errors
+    CrsGeometryError(#[from] crate::crs_geo::CrsGeometryError),
     #[error(transparent)]
     GdalEngineError(#[from] crate::components::engines::gdal_engine::GdalEngineError),
-    #[error(transparent)]
-    GeoBoundsError(#[from] crate::components::bounds::BoundsError),
+    /// crate lib errors
     #[error("Value could not be cast")]
     Uncastable,
+    #[error("Coundn't find area of use in file")]
+    NoAreaOfUse,
+    #[error("Ther is no intersection between geometries")]
+    NoIntersection,
 }

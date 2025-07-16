@@ -3,10 +3,10 @@ use std::{collections::HashMap, fmt::Debug, marker::PhantomData, path::Path, rc:
 use crate::{
     components::{
         band::{BandInfo, BandReader},
-        bounds::ReadBounds,
+        bounds::{GeoBounds, ReadBounds},
         file::File,
         raster::RasterBand,
-        transforms::BandGeoTransform,
+        transforms::ReadGeoTransform,
         DataType, Metadata,
     },
     errors::Result,
@@ -15,11 +15,16 @@ use crate::{
 
 /// Implementations for gdal
 pub mod gdal_engine {
+
+    use crate::crs_geo::CrsGeometry;
+
     use super::*;
     use gdal::{
         raster::GdalType, Dataset as GdalDataset, Metadata as GdalMetadata,
         MetadataEntry as GdalMetadataEntry,
     };
+    use geo::{AffineOps, Rect};
+    use log::info;
 
     fn filter_metadata_gdal(metadata: &impl GdalMetadata) -> HashMap<String, String> {
         GdalMetadata::metadata(metadata)
@@ -94,15 +99,26 @@ pub mod gdal_engine {
         fn description(&self) -> Result<String> {
             Ok(self.dataset.description()?)
         }
-        fn shape(&self) -> (usize, usize) {
+        /* fn shape(&self) -> (usize, usize) {
             self.dataset.raster_size()
+        } */
+        fn geo_bounds(&self) -> Result<GeoBounds> {
+            let transform = self.transform()?;
+            let top_left_geo = geo::Point::from((transform.xoff(), transform.yoff()));
+            let inv_transform = transform.inverse();
+            let top_left_pixel = top_left_geo.affine_transform(&inv_transform).x_y();
+            let pixel_shape: (f64, f64) = try_tuple_cast(self.dataset.raster_size())?;
+            let pixel_bounds = Rect::new(
+                (top_left_pixel.0, top_left_pixel.1 - pixel_shape.1),
+                (top_left_pixel.0 + pixel_shape.0, top_left_pixel.1),
+            );
+            let geo_bounds = pixel_bounds.affine_transform(&transform);
+            Ok(GeoBounds::from(CrsGeometry::new(transform.crs, geo_bounds)))
         }
-        fn crs(&self) -> Rc<str> {
-            Rc::from(self.dataset.projection())
-        }
-        fn transform(&self) -> Result<BandGeoTransform> {
+
+        fn transform(&self) -> Result<ReadGeoTransform> {
             let gdal_transform = self.dataset.geo_transform()?;
-            Ok(BandGeoTransform::new(
+            Ok(ReadGeoTransform::new(
                 gdal_transform[1],
                 gdal_transform[2],
                 gdal_transform[0],
@@ -123,6 +139,12 @@ pub mod gdal_engine {
             let reader: Arc<dyn BandReader<T>> =
                 Arc::new(GdalBandReader(Arc::clone(&self.path), index + 1));
             Ok(RasterBand { info, reader })
+        }
+    }
+
+    impl<T: GdalDataType> GdalFile<T> {
+        fn crs(&self) -> Rc<Box<str>> {
+            Rc::new(Box::from(self.dataset.projection()))
         }
     }
 
@@ -154,12 +176,16 @@ pub mod gdal_engine {
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(self.1)?;
             let window_shape = bounds.shape();
-            let offset = try_tuple_cast(bounds.offset())?;
+            let offset = try_tuple_cast(bounds.top_left())?;
+            //let offset = (offset.0, offset.1);
+
+            //let offset = (offset.0 + window_shape.0 as isize, offset.1);
             /* if T::gdal_ordinal() != rasterband.band_type() as u32 {
                 Err(gdal::errors::GdalError::BadArgument(
                     "result array type must match band data types".to_string(),
                 ))?
             } */
+            info!("reading at offset: {:?}, shape: {:?}", offset, window_shape);
             Ok(rasterband.read_into_slice::<T>(offset, window_shape, window_shape, slice, None)?)
         }
     }

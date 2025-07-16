@@ -3,11 +3,10 @@ use std::rc::Rc;
 
 use crate::{
     components::bounds::{GeoBounds, ViewBounds},
-    errors::Result,
-    try_tuple_cast,
+    CoordUtils,
 };
 
-/// Transform fom [View] `pixel space`
+/* /// Transform fom [View] `pixel space`
 /// to `geo space` of given [GeoBounds].
 ///
 /// The [View]  `pixel space` is given
@@ -24,6 +23,7 @@ pub struct ViewGeoTransform {
     crs: Rc<str>,
 }
 
+/// Affine transform between [ViewBounds] and [GeoBounds].
 impl ViewGeoTransform {
     pub fn new<'a>(view_bounds: &ViewBounds, geo_bounds: &GeoBounds) -> Result<Self> {
         let view_pixel_shape: (f64, f64) = try_tuple_cast(view_bounds.shape())?;
@@ -32,33 +32,35 @@ impl ViewGeoTransform {
             0.,
             geo_bounds.geometry.min().x,
             0.,
-            geo_bounds.geometry.height() / view_pixel_shape.1,
-            geo_bounds.geometry.min().y,
+            - geo_bounds.geometry.height() / view_pixel_shape.1,
+            geo_bounds.geometry.min().y + geo_bounds.geometry.height(),
         );
         Ok(Self {
             transform,
             crs: Rc::clone(&geo_bounds.crs),
         })
     }
-}
+} */
 
+/// Affine transform between crs
+/// and reading pixel space.
 #[derive(Shrinkwrap, Debug)]
-pub struct BandGeoTransform {
+pub struct ReadGeoTransform {
     #[shrinkwrap(main_field)]
     transform: AffineTransform,
-    crs: Rc<str>,
+    pub crs: Rc<Box<str>>,
 }
 
-impl BandGeoTransform {
-    pub fn new(a: f64, b: f64, xoff: f64, d: f64, e: f64, yoff: f64, crs: Rc<str>) -> Self {
-        Self {
-            transform: AffineTransform::new(a, b, xoff, d, e, yoff),
-            crs,
-        }
+impl ReadGeoTransform {
+    pub fn new(a: f64, b: f64, xoff: f64, d: f64, e: f64, yoff: f64, crs: Rc<Box<str>>) -> Self {
+        let transform = AffineTransform::new(a, b, xoff, d, e, yoff);
+        //let transform = transform.scaled(transform.a().signum(), 1., Coord::from((0., 0.))); // shouldn't then translating help?
+        //let transform = transform.scaled(1., transform.e().signum(), Coord::from((0., 0.))); //.scaled(transform.a().signum(), transform.e().signum(), (xoff, yoff));
+        Self { transform, crs }
     }
 
-    pub fn inverse(&self) -> GeoBandTransform {
-        GeoBandTransform {
+    pub fn inverse(&self) -> GeoReadTransform {
+        GeoReadTransform {
             transform: self.transform.inverse().unwrap(),
             crs: Rc::clone(&self.crs),
         }
@@ -66,15 +68,15 @@ impl BandGeoTransform {
 }
 
 #[derive(Shrinkwrap, Debug)]
-pub struct GeoBandTransform {
+pub struct GeoReadTransform {
     #[shrinkwrap(main_field)]
     transform: AffineTransform,
-    crs: Rc<str>,
+    crs: Rc<Box<str>>,
 }
 
-impl GeoBandTransform {
-    pub fn inverse(&self) -> BandGeoTransform {
-        BandGeoTransform {
+impl GeoReadTransform {
+    pub fn inverse(&self) -> ReadGeoTransform {
+        ReadGeoTransform {
             transform: self.transform.inverse().unwrap(),
             crs: Rc::clone(&self.crs),
         }
@@ -86,10 +88,19 @@ pub struct ViewReadTransform(AffineTransform);
 
 impl ViewReadTransform {
     pub fn new(
-        view_geo_transform: &ViewGeoTransform,
-        geo_band_transform: &GeoBandTransform,
+        view_bounds: &ViewBounds,
+        geo_bounds: &GeoBounds,
+        geo_band_transform: &GeoReadTransform,
     ) -> Self {
-        assert_eq!(view_geo_transform.crs, geo_band_transform.crs);
+        let view_pixel_shape: (f64, f64) = view_bounds.shape().try_cast().unwrap().x_y();
+        let view_geo_transform = AffineTransform::new(
+            geo_bounds.width() / view_pixel_shape.0,
+            0.,
+            geo_bounds.min().x,
+            0.,
+            -geo_bounds.height() / view_pixel_shape.1,
+            geo_bounds.min().y + geo_bounds.height(),
+        );
         Self(view_geo_transform.compose(geo_band_transform))
     }
 
@@ -101,12 +112,11 @@ impl ViewReadTransform {
     ///
     /// `view_shape = read_shape * N `
     ///
-    /// where N is non negative.
+    /// where N is non negative int.
     ///
     /// A.k.a the shape of the chunk of pixels in [ViewBounds] a pixel in [ReadBounds] fills up.
     ///
     pub fn ratio(&self) -> (usize, usize) {
-        let inv = self.inverse().unwrap();
-        (inv.a().abs() as usize, inv.e().abs() as usize)
+        (self.a().abs() as usize, self.e().abs() as usize)
     }
 }
