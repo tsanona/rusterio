@@ -9,12 +9,12 @@ pub enum RusterioError {
     /// crate mod errors
     CrsGeometryError(#[from] crate::crs_geo::CrsGeometryError),
     #[error(transparent)]
+    NoIntersection(#[from] crate::intersection::IntersectionError),
+    #[error(transparent)]
     GdalEngineError(#[from] crate::components::engines::gdal_engine::GdalEngineError),
     /// crate lib errors
     #[error("Value could not be cast")]
     Uncastable,
     #[error("Coundn't find area of use in file")]
     NoAreaOfUse,
-    #[error("Ther is no intersection between geometries")]
-    NoIntersection,
 }

@@ -98,7 +98,6 @@ where
             .map(|group_info| &group_info.transform);
 
         let view_bounds = ViewBounds::from(&bounds, view_transforms)?;
-        //let view_geo_transform = ViewGeoTransform::new(&view_bounds, &bounds)?;
 
         let bands = Rc::from_iter(selected_bands.iter().map(|(group_info, raster_band)| {
             let transform = ViewReadTransform::new(&view_bounds, &bounds, &group_info.transform);
@@ -209,9 +208,6 @@ impl<T: DataType> SendSyncView<T> {
                             };
                             let row_start =
                                 (row_idx * ratio.y + top_block_hight - block_hight) * view_shape.x;
-
-                            //let length = view_shape_x*height;
-                            //band_buff[start..start+length];
 
                             for (col_idx, read_pixel) in read_row.iter().enumerate() {
                                 let block_width = if col_idx.is_zero() {

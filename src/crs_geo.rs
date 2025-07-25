@@ -74,16 +74,6 @@ where
     }
 }
 
-/* impl<G: GeometryTrait + Intersection<Output = MultiPolygon<G::T>>> Intersection for CrsGeometry<G>
-where G::T: BoolOpsNum
-{
-    type Output = CrsGeometry<G::Output>;
-    fn intersection(&self, rhs: &Self) -> Result<CrsGeometry<MultiPolygon<G::T>>> {
-        let geometry  = self.geometry.intersection(&rhs.geometry)?;
-        Ok(CrsGeometry::new(Rc::clone(&self.crs), geometry))
-    }
-} */
-
 impl<G: GeometryTrait + Intersection> Intersection for CrsGeometry<G>
 where
     G::T: BoolOpsNum,
@@ -94,63 +84,3 @@ where
         Ok(CrsGeometry::new(Rc::clone(&self.crs), geometry))
     }
 }
-
-/* impl<T: CoordNum + Ord> Intersection for CrsGeometry<Rect<T>> {
-    type Output = Option<Self>;
-    fn intersection(&self, rhs: &Self) -> Self::Output {
-        let geometry = self.geometry.intersection(&rhs.geometry)?;
-        Some(CrsGeometry::new(Rc::clone(&self.crs), geometry))
-    }
-} */
-
-/* impl<G, T: CoordNum + Ord + BoolOpsNum> Intersection for CrsGeometry<G>
-where G: BooleanOps
-{
-    type Output = Option<MultiP>;
-    fn intersection(&self, rhs: &Self) -> Self::Output {
-        let geometry = self.geometry.intersection(&rhs.geometry)?;
-        Some(CrsGeometry::new(Rc::clone(&self.crs), geometry))
-    }
-} */
-
-/* impl<G> CrsGeometry<G>
-where
-    G: GeometryTrait + Transform<G::T, Output = G> + BooleanOps,
-    G::T: CoordNum
-{
-    pub fn intersection(&self, rhs: &Self) -> Result<CrsGeometry<MultiPolygon<G::Scalar>>>
-    where
-        G: Clone,
-    {
-        let rhs_geometry = rhs.projected_geometry(&self.crs)?;
-        let geometry = self.geometry.intersection(&rhs_geometry);
-        Ok(CrsGeometry {
-            crs: Rc::clone(&self.crs),
-            geometry,
-        })
-    }
-} */
-
-/* impl<'a, G> CrsGeometry<G>
-where
-    G: GeometryTrait + Transform<G::T, Output = G> + ToGeoRect<G::T>,
-    G::T: CoordNum + Debug + BoolOpsNum + 'a,
-{
-    fn intersection<H: GeometryTrait<T=G::T> + ToGeoRect<H::T> + Transform<H::T, Output = H>>(&self, rhs: &CrsGeometry<H>) -> Result<CrsGeometry<Rect<G::T>>>
-    where
-        G: Clone,
-    {
-        let rhs_geometry = if rhs.crs.ne(&self.crs) {
-            &rhs.projected_geometry(&self.crs)?
-        } else {
-            &rhs.geometry
-        };
-        let rhs_polygon = Polygon::from(rhs_geometry.to_rect());
-        let lhs_polygon = Polygon::from(self.geometry.to_rect());
-        let geometry = lhs_polygon.intersection(&rhs_polygon).bounding_rect().ok_or(RusterioError::NoIntersection)?;
-        Ok(CrsGeometry {
-            crs: Rc::clone(&self.crs),
-            geometry,
-        })
-    }
-} */

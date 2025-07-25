@@ -102,21 +102,6 @@ impl ViewBounds {
     pub fn size(&self) -> usize {
         self.0.unsigned_area()
     }
-
-    /* pub fn intersection(&self, rhs: &Self) -> std::result::Result<Self, BoundsError> {
-        if self.0.intersects(&rhs.0) {
-            let (self_max_x, self_max_y) = self.0.max().x_y();
-            let (rhs_max_x, rhs_max_y) = rhs.0.max().x_y();
-            let max = (self_max_x.min(rhs_max_x), self_max_y.min(rhs_max_y));
-
-            let (self_min_x, self_min_y) = self.0.min().x_y();
-            let (rhs_min_x, rhs_min_y) = rhs.0.min().x_y();
-            let min = (self_min_x.max(rhs_min_x), self_min_y.max(rhs_min_y));
-
-            return Ok(Self(Rect::new(min, max)));
-        }
-        Err(BoundsError::NoIntersection)
-    } */
 }
 
 #[derive(ambassador::Delegate, Shrinkwrap, Debug)]

@@ -6,42 +6,6 @@ use crate::{
     CoordUtils,
 };
 
-/* /// Transform fom [View] `pixel space`
-/// to `geo space` of given [GeoBounds].
-///
-/// The [View]  `pixel space` is given
-/// by taking the [lcm](https://en.wikipedia.org/wiki/Least_common_multiple)
-/// of all `read bounds` for a given [GeoBounds].
-/// This means that, the resolution of `View space`
-/// will be equal to the lcm of the resolutions of the bands in [View].
-///
-/// [View][crate::components::view::View], [GeoBounds][crate::components::bounds::GeoBounds]
-#[derive(Shrinkwrap, Debug)]
-pub struct ViewGeoTransform {
-    #[shrinkwrap(main_field)]
-    transform: AffineTransform,
-    crs: Rc<str>,
-}
-
-/// Affine transform between [ViewBounds] and [GeoBounds].
-impl ViewGeoTransform {
-    pub fn new<'a>(view_bounds: &ViewBounds, geo_bounds: &GeoBounds) -> Result<Self> {
-        let view_pixel_shape: (f64, f64) = try_tuple_cast(view_bounds.shape())?;
-        let transform = AffineTransform::new(
-            geo_bounds.geometry.width() / view_pixel_shape.0,
-            0.,
-            geo_bounds.geometry.min().x,
-            0.,
-            - geo_bounds.geometry.height() / view_pixel_shape.1,
-            geo_bounds.geometry.min().y + geo_bounds.geometry.height(),
-        );
-        Ok(Self {
-            transform,
-            crs: Rc::clone(&geo_bounds.crs),
-        })
-    }
-} */
-
 /// Affine transform between crs
 /// and reading pixel space.
 #[derive(Shrinkwrap, Debug)]
@@ -54,8 +18,6 @@ pub struct ReadGeoTransform {
 impl ReadGeoTransform {
     pub fn new(a: f64, b: f64, xoff: f64, d: f64, e: f64, yoff: f64, crs: Rc<Box<str>>) -> Self {
         let transform = AffineTransform::new(a, b, xoff, d, e, yoff);
-        //let transform = transform.scaled(transform.a().signum(), 1., Coord::from((0., 0.))); // shouldn't then translating help?
-        //let transform = transform.scaled(1., transform.e().signum(), Coord::from((0., 0.))); //.scaled(transform.a().signum(), transform.e().signum(), (xoff, yoff));
         Self { transform, crs }
     }
 
