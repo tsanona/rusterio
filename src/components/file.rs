@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub trait File<T: DataType>: Debug + Sized {
-    fn open<P: AsRef<Path>>(path: P) -> Result<Self>;
+    fn open(path: impl AsRef<Path>) -> Result<Self>;
     fn description(&self) -> Result<String>;
     fn geo_bounds(&self) -> Result<GeoBounds>;
     fn transform(&self) -> Result<ReadGeoTransform>;

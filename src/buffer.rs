@@ -1,33 +1,58 @@
-use std::fmt::Debug;
+use std::{marker::PhantomData, mem::MaybeUninit};
 
 use crate::components::DataType;
 
 #[derive(Debug)]
-pub struct Buffer<T: DataType, const D: usize> {
-    // Row-major ordered
+pub struct Buffer<T, const ND: usize> {
+    // Row-major
     data: Box<[T]>,
-    shape: [usize; D],
+    shape: [usize; ND],
+    _t: PhantomData<T>,
 }
 
-impl<T: DataType, const D: usize> Buffer<T, D> {
-    pub fn new(shape: [usize; D]) -> Self {
-        let data = unsafe { Box::new_zeroed_slice(shape.iter().product()).assume_init() };
-        Buffer { data, shape }
+impl<T: DataType, const ND: usize> Buffer<MaybeUninit<T>, ND> {
+    pub fn new_uninit(shape: [usize; ND]) -> Self {
+        Self {
+            data: Box::new_uninit_slice(shape.iter().product()),
+            shape,
+            _t: PhantomData,
+        }
     }
 
-    pub fn as_mut_data(&mut self) -> &mut [T] {
-        &mut self.data
+    pub unsafe fn assume_init(self) -> Buffer<T, ND> {
+        let data = self.data.assume_init();
+        Buffer::<T, ND> {
+            data: data,
+            shape: self.shape,
+            _t: PhantomData,
+        }
+    }
+}
+
+impl<T: DataType, const ND: usize> Buffer<T, ND> {
+    pub fn new_zeroed(shape: [usize; ND]) -> Self {
+        Self {
+            data: unsafe { Box::new_zeroed_slice(shape.iter().product()).assume_init() },
+            shape,
+            _t: PhantomData,
+        }
     }
 
-    pub fn to_owned_parts(self) -> (Box<[T]>, [usize; D]) {
+    pub fn to_owned_parts(self) -> (Box<[T]>, [usize; ND]) {
         (self.data, self.shape)
+    }
+}
+
+impl<T, const ND: usize> Buffer<T, ND> {
+    pub fn as_mut(&mut self) -> &mut [T] {
+        &mut self.data
     }
 
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
-    pub fn shape(&self) -> [usize; D] {
+    pub fn shape(&self) -> [usize; ND] {
         self.shape
     }
 }

@@ -10,5 +10,5 @@ pub trait BandInfo: std::fmt::Debug {
 }
 
 pub trait BandReader<T: DataType>: Send + Sync + std::fmt::Debug {
-    fn read_into_slice(&self, bounds: ReadBounds, slice: &mut [T]) -> Result<()>;
+    fn read_into_slice(&self, bounds: &ReadBounds, slice: &mut [T]) -> Result<()>;
 }

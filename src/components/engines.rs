@@ -16,14 +16,15 @@ use crate::{
 /// Implementations for gdal
 pub mod gdal_engine {
 
-    use crate::crs_geo::CrsGeometry;
+    use crate::{crs_geo::CrsGeometry, CoordUtils};
 
     use super::*;
     use gdal::{
         raster::GdalType, Dataset as GdalDataset, Metadata as GdalMetadata,
         MetadataEntry as GdalMetadataEntry,
     };
-    use geo::{AffineOps, Rect};
+    use geo::{AffineOps, Point, Rect};
+    use geo_traits::RectTrait;
     use log::info;
 
     fn filter_metadata_gdal(metadata: &impl GdalMetadata) -> HashMap<String, String> {
@@ -47,8 +48,8 @@ pub mod gdal_engine {
     pub trait GdalDataType: DataType + GdalType {}
     impl GdalDataType for u16 {}
 
-    pub fn open<T: GdalDataType, P: AsRef<Path>>(path: P) -> Result<Raster<T>> {
-        if let Ok(raster) = Raster::new::<GdalFile<T>, _>(&path, Indexes::all()) {
+    pub fn open<T: GdalDataType>(path: impl AsRef<Path>) -> Result<Raster<T>> {
+        if let Ok(raster) = Raster::new::<GdalFile<T>>(&path, Indexes::all()) {
             return Ok(raster);
         } else {
             let dataset = GdalDataset::open(&path)?;
@@ -71,7 +72,7 @@ pub mod gdal_engine {
                             (Indexes::all()),
                             (Indexes::from([0usize, 1])),
                         ])
-                        .map(|(path, indexes)| Raster::new::<GdalFile<T>, _>(path, indexes))
+                        .map(|(path, indexes)| Raster::new::<GdalFile<T>>(path, indexes))
                         .collect::<Result<Vec<_>>>()?;
                     return Raster::stack(sub_dataset_paths);
                 }
@@ -88,7 +89,7 @@ pub mod gdal_engine {
     }
 
     impl<T: GdalDataType> File<T> for GdalFile<T> {
-        fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
+        fn open(path: impl AsRef<Path>) -> Result<Self> {
             let dataset = Rc::new(GdalDataset::open(&path)?);
             Ok(GdalFile {
                 path: Arc::from(path.as_ref()),
@@ -99,20 +100,14 @@ pub mod gdal_engine {
         fn description(&self) -> Result<String> {
             Ok(self.dataset.description()?)
         }
-        /* fn shape(&self) -> (usize, usize) {
-            self.dataset.raster_size()
-        } */
         fn geo_bounds(&self) -> Result<GeoBounds> {
             let transform = self.transform()?;
-            let top_left_geo = geo::Point::from((transform.xoff(), transform.yoff()));
-            let inv_transform = transform.inverse();
-            let top_left_pixel = top_left_geo.affine_transform(&inv_transform).x_y();
-            let pixel_shape: (f64, f64) = try_tuple_cast(self.dataset.raster_size())?;
-            let pixel_bounds = Rect::new(
-                (top_left_pixel.0, top_left_pixel.1 - pixel_shape.1),
-                (top_left_pixel.0 + pixel_shape.0, top_left_pixel.1),
-            );
-            let geo_bounds = pixel_bounds.affine_transform(&transform);
+            let top_left_geo = geo::Point::new(transform.xoff(), transform.yoff());
+            let pixel_shape = Point::<f64>::from(try_tuple_cast(self.dataset.raster_size())?);
+            let bottom_right_geo = pixel_shape.affine_transform(&transform);
+            let min = (top_left_geo.x(), bottom_right_geo.y());
+            let max = (bottom_right_geo.x(), top_left_geo.y());
+            let geo_bounds = Rect::new(min, max);
             Ok(GeoBounds::from(CrsGeometry::new(transform.crs, geo_bounds)))
         }
 
@@ -172,11 +167,11 @@ pub mod gdal_engine {
     struct GdalBandReader(Arc<Path>, usize);
 
     impl<T: GdalDataType> BandReader<T> for GdalBandReader {
-        fn read_into_slice(&self, bounds: ReadBounds, slice: &mut [T]) -> Result<()> {
+        fn read_into_slice(&self, bounds: &ReadBounds, slice: &mut [T]) -> Result<()> {
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(self.1)?;
             let window_shape = bounds.shape();
-            let offset = try_tuple_cast(bounds.top_left())?;
+            let offset = bounds.min().try_cast()?.x_y();
             //let offset = (offset.0, offset.1);
 
             //let offset = (offset.0 + window_shape.0 as isize, offset.1);

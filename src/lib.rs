@@ -1,3 +1,5 @@
+#![feature(maybe_uninit_slice)]
+#![feature(maybe_uninit_fill)]
 #![feature(new_zeroed_alloc)]
 
 #[macro_use]
@@ -28,10 +30,17 @@ use errors::{Result, RusterioError};
 pub use indexes::Indexes;
 
 trait CoordUtils: CoordTrait + Sized {
-    /*  fn map<NT: CoordNum>(&self, func: impl Fn(Self::T, Self::T) -> Coord<NT>) -> Coord<NT>
+    /* fn map<NT: CoordNum>(self, func: impl Fn(Coord<Self::T>) -> Coord<NT>) -> Coord<NT>
     where Self::T: CoordNum
     {
-        func(self.x(), self.y())
+        func(Coord::from((self.x(), self.y())))
+    }
+
+    fn affine_transform(self, transform: AffineTransform<Self::T>) -> Coord<Self::T>
+    where
+        Self::T: CoordNum
+    {
+        self.map(|coord| transform.apply(coord))
     } */
 
     fn map_each<NT: CoordNum>(&self, func: impl Fn(Self::T) -> NT) -> Coord<NT>
@@ -103,7 +112,7 @@ mod tests {
         ];
         for (res, indexes) in [10, 20, 60].into_iter().zip(band_indexes) {
             let raster_path = SENTINEL2_RESOLUTION_GROUP_PATH(res);
-            let raster = Raster::new::<GdalFile<u16>, _>(raster_path, indexes).unwrap();
+            let raster = Raster::new::<GdalFile<u16>>(raster_path, indexes).unwrap();
             sentinel_rasters.push(raster);
         }
 
@@ -112,7 +121,7 @@ mod tests {
             .view(None, Indexes::from([0, 4, 10])) // all different resolutions
             .unwrap();
         let clipped_view = sentinel_view
-            .clip(ViewBounds::new((0, 0), (125, 125)))
+            .clip(ViewBounds::new((0, 0), (10, 10)))
             .unwrap();
         let buff = clipped_view.read().unwrap();
         info!(
@@ -130,7 +139,7 @@ mod tests {
     #[rstest]
     #[test_log::test]
     fn works_with_full_sentinel2() {
-        let sentinel_raster = gdal_engine::open::<u16, _>(SENTINEL2_FILE_PATH()).unwrap();
+        let sentinel_raster = gdal_engine::open::<u16>(SENTINEL2_FILE_PATH()).unwrap();
         info!("{:#?}", sentinel_raster);
     }
 
@@ -138,7 +147,7 @@ mod tests {
     #[test_log::test]
     fn works_with_partial_sentinel2() {
         let sentinel_raster =
-            gdal_engine::open::<u16, _>(SENTINEL2_RESOLUTION_GROUP_PATH(10)).unwrap();
+            gdal_engine::open::<u16>(SENTINEL2_RESOLUTION_GROUP_PATH(10)).unwrap();
         info!("{:#?}", sentinel_raster);
     }
 
@@ -148,7 +157,7 @@ mod tests {
         use ndarray;
 
         let sentinel_raster =
-            gdal_engine::open::<u16, _>(SENTINEL2_RESOLUTION_GROUP_PATH(10)).unwrap();
+            gdal_engine::open::<u16>(SENTINEL2_RESOLUTION_GROUP_PATH(10)).unwrap();
 
         let (data, shape) = sentinel_raster
             .view(None, Indexes::all())
@@ -169,23 +178,24 @@ mod tests {
         use image;
         //use ndarray::s;
 
-        let sentinel_raster = gdal_engine::open::<u16, _>(
+        let sentinel_raster = gdal_engine::open::<u16>(
             // SENTINEL2_RESOLUTION_GROUP_PATH(10)
             SENTINEL2_FILE_PATH(),
         )
         .unwrap();
 
         let view = sentinel_raster
-            .view(None, Indexes::from([0, 1, 2]))
+            .view(None, Indexes::from([0, 4, 15]))
             .unwrap()
-            .clip(ViewBounds::new((0, 0), (500, 1000)))
+            .clip(ViewBounds::new((0, 0), (1000, 1000)))
             .unwrap();
 
         let (data, shape) = view.read().unwrap().to_owned_parts();
         let shape = [shape[0], shape[2], shape[1]];
         let arr = ndarray::Array3::from_shape_vec(shape, data.to_vec()).unwrap();
-        info!("as ndarray: {:?}", arr.dim());
-        //info!("as ndarray: {:?}", arr.slice(s![1, 10975.., 10975..]));
+        let arr_dim = arr.dim();
+        info!("as ndarray: {:?}", arr_dim);
+        //info!("as ndarray: {:?}", arr); //.slice(s![0.., ..10, (arr_dim.2 - 10)..]));
 
         let arr = arr.permuted_axes([1, 2, 0]); // rearrange axes to (W, H, C)
         let arr = arr.mapv(u32::from);

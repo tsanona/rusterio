@@ -1,4 +1,4 @@
-use geo::AffineTransform;
+use geo::{AffineTransform, Coord};
 use std::rc::Rc;
 
 use crate::{
@@ -90,7 +90,7 @@ impl ViewReadTransform {
     pub fn new(
         view_bounds: &ViewBounds,
         geo_bounds: &GeoBounds,
-        geo_band_transform: &GeoReadTransform,
+        geo_read_transform: &GeoReadTransform,
     ) -> Self {
         let view_pixel_shape: (f64, f64) = view_bounds.shape().try_cast().unwrap().x_y();
         let view_geo_transform = AffineTransform::new(
@@ -101,7 +101,7 @@ impl ViewReadTransform {
             -geo_bounds.height() / view_pixel_shape.1,
             geo_bounds.min().y + geo_bounds.height(),
         );
-        Self(view_geo_transform.compose(geo_band_transform))
+        Self(view_geo_transform.compose(geo_read_transform))
     }
 
     /// Ratio of View to Read shapes. (Height, Width)
@@ -116,7 +116,11 @@ impl ViewReadTransform {
     ///
     /// A.k.a the shape of the chunk of pixels in [ViewBounds] a pixel in [ReadBounds] fills up.
     ///
-    pub fn ratio(&self) -> (usize, usize) {
-        (self.a().abs() as usize, self.e().abs() as usize)
+    pub fn ratio(&self) -> Coord<usize> {
+        let inv = self.inverse().unwrap();
+        Coord {
+            x: inv.a().abs() as usize,
+            y: inv.e().abs() as usize,
+        }
     }
 }

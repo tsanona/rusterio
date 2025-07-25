@@ -1,7 +1,8 @@
-use geo::{Coord, MapCoords};
+use geo::MapCoords;
 use log::info;
+use num::Zero;
 use rayon::prelude::*;
-use std::{collections::HashSet, fmt::Debug, rc::Rc, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, ops::Rem, rc::Rc, sync::Arc};
 
 use crate::{
     buffer::Buffer,
@@ -14,6 +15,7 @@ use crate::{
     },
     errors::{Result, RusterioError},
     intersection::Intersection,
+    CoordUtils,
 };
 
 #[derive(Debug, Clone)]
@@ -118,12 +120,6 @@ where
             .collect()
     }
 
-    /// Array shape (C, H, W)
-    pub fn shape(&self) -> (usize, usize, usize) {
-        let (width, hieght) = self.bounds.shape().x_y();
-        (self.bands.len(), hieght, width)
-    }
-
     pub fn read(self) -> Result<Buffer<T, 3>> {
         self.to_send_sync().read()
     }
@@ -149,74 +145,89 @@ impl<T: DataType> SendSyncView<T> {
     }
 
     pub fn read(&self) -> Result<Buffer<T, 3>> {
-        let mut buff = Buffer::new(self.array_shape());
-        buff.as_mut_data()
-            .par_chunks_mut(self.bounds.size())
+        let mut buff = Buffer::new_uninit(self.array_shape()); // check if is writting correctly
+        let view_bounds = &self.bounds;
+        buff.as_mut()
+            .par_chunks_mut(view_bounds.size())
             .zip(self.bands.into_par_iter())
             .map(|(band_buff, read_band)| {
-                let read_bounds = ReadBounds::from((&self.bounds, &read_band.transform));
-                info!("reading {:?} as {:?}", self.bounds, read_bounds);
+                let read_bounds = ReadBounds::from((view_bounds, &read_band.transform));
+                info!("reading {:?} as {:?}", view_bounds, read_bounds);
                 match read_bounds.shape() {
                     (1, 1) => {
                         let mut read_buff = [T::zero()];
                         read_band
                             .reader
-                            .read_into_slice(read_bounds, &mut read_buff)?;
-                        Ok::<_, RusterioError>(band_buff.fill(read_buff[0]))
+                            .read_into_slice(&read_bounds, &mut read_buff)?;
+                        let _ = band_buff.write_filled(read_buff[0]);
+                        Ok::<_, RusterioError>(())
                     }
-                    read_shape if read_shape.eq(&self.bounds.shape().x_y()) => {
+                    read_shape if read_shape.eq(&view_bounds.shape().x_y()) => {
                         // TODO: chunk!
-                        Ok(read_band.reader.read_into_slice(read_bounds, band_buff)?)
+                        Ok(read_band.reader.read_into_slice(&read_bounds, unsafe {
+                            band_buff.assume_init_mut()
+                        })?)
                     }
                     read_shape => {
                         info!("band has different shape: {:?}", read_shape);
                         let read_buff_len = read_bounds.size();
-                        let mut read_buff =
-                            unsafe { Box::new_zeroed_slice(read_buff_len).assume_init() };
+                        let mut read_buff = Buffer::new_zeroed([read_buff_len]);
                         read_band
                             .reader
-                            .read_into_slice(read_bounds, &mut read_buff)?;
+                            .read_into_slice(&read_bounds, read_buff.as_mut())?;
 
-                        let (ratio_x, ratio_y) = read_band.transform.ratio();
-                        info!("{:?}", (ratio_x, ratio_y));
-                        let realtive_bounds = self.bounds.map_coords(|Coord { x, y }| Coord {
-                            x: (x % ratio_x),
-                            y: (y % ratio_y),
-                        });
-                        let (left_block_width, bottom_block_hight) =
-                            (Coord::from((ratio_x, ratio_y)) - realtive_bounds.min()).x_y();
-                        let (right_block_width, top_block_hight) =
-                            (Coord::from((ratio_x, ratio_y)) - realtive_bounds.max()).x_y();
-                        let (view_shape_cols, view_shape_rows) = self.bounds.shape().x_y();
+                        let ratio = read_band.transform.ratio();
 
-                        for (col_idx, read_col) in read_buff.chunks_exact(read_shape.0).enumerate()
+                        info!(
+                            "read shape: {:?}, ratio: {:?}, view shape: {:?}",
+                            read_shape,
+                            ratio,
+                            view_bounds.shape()
+                        );
+                        let relative_bounds =
+                            view_bounds.map_coords(|coord| coord.operate(&ratio, usize::rem));
+
+                        let left_block_width = if relative_bounds.min().x.is_zero() {
+                            ratio.x
+                        } else {
+                            ratio.x - relative_bounds.min().x
+                        };
+                        let top_block_hight = if relative_bounds.max().y.is_zero() {
+                            ratio.y
+                        } else {
+                            relative_bounds.max().y
+                        };
+                        let view_shape = view_bounds.shape();
+
+                        for (row_idx, read_row) in
+                            read_buff.as_mut().chunks_exact(read_shape.0).enumerate()
                         {
-                            let block_width = match col_idx {
-                                0 => left_block_width, //top_block_hight,
-                                _ if col_idx != read_shape.1 => ratio_x,
-                                _ => right_block_width, //bottom_block_hight,
+                            let block_hight = if row_idx.is_zero() {
+                                top_block_hight
+                            } else {
+                                ratio.y
                             };
-                            let row_start = (col_idx * ratio_x + left_block_width - block_width)
-                                * view_shape_rows;
+                            let row_start =
+                                (row_idx * ratio.y + top_block_hight - block_hight) * view_shape.x;
 
                             //let length = view_shape_x*height;
                             //band_buff[start..start+length];
 
-                            for (row_idx, read_pixel) in read_col.iter().enumerate() {
-                                let block_hight = match row_idx {
-                                    0 => top_block_hight, //left_block_width,
-                                    _ if row_idx != read_shape.0 => ratio_y,
-                                    _ => bottom_block_hight, //right_block_width,
+                            for (col_idx, read_pixel) in read_row.iter().enumerate() {
+                                let block_width = if col_idx.is_zero() {
+                                    left_block_width
+                                } else {
+                                    ratio.x
                                 };
-                                let col_start = row_idx * ratio_y + top_block_hight - block_hight;
+                                let col_start = col_idx * ratio.x + left_block_width - block_width;
                                 let band_write_range =
                                     row_start + col_start..row_start + col_start + block_width;
-                                band_buff[band_write_range].fill(*read_pixel);
+                                band_buff[band_write_range].write_filled(*read_pixel);
                             }
 
-                            let length = view_shape_cols * block_width;
+                            let length = view_shape.x * block_hight;
                             band_buff[row_start..row_start + length]
-                                .chunks_exact_mut(view_shape_cols)
+                                .chunks_exact_mut(view_shape.x)
                                 .into_iter()
                                 //.par_chunks_exact(view_shape_x)
                                 .reduce(|lhc, mut _rhc| {
@@ -230,12 +241,8 @@ impl<T: DataType> SendSyncView<T> {
                 }
             })
             .collect::<Result<Vec<()>>>()?;
-        Ok(buff)
+        Ok(unsafe { buff.assume_init() })
     }
-
-    /* pub fn bounds_shape(&self) -> (usize, usize) {
-        self.bounds.shape()
-    } */
 
     /// Array shape (C, H, W)
     pub fn array_shape(&self) -> [usize; 3] {

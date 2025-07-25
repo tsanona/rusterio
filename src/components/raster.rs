@@ -87,10 +87,8 @@ impl<T: DataType> RasterBands<T> {
 /// Collection of bands that share size,
 /// resolution, data type.
 pub struct Raster<T: DataType> {
-    /// Bounds in 'geospace' with raster crs
-    /// such that,
-    /// when projected to pixel coordinates (with transform),
-    /// `min @ (0, 0)` and `max @ array_size`.
+    /// Bounds of full raster
+    /// in 'geospace' with raster crs
     bounds: GeoBounds,
     bands: RasterBands<T>,
 }
@@ -113,7 +111,7 @@ impl<T: DataType> Raster<T> {
         raster
     }
 
-    pub fn new<F: File<T>, P: AsRef<Path>>(path: P, band_indexes: Indexes) -> Result<Self> {
+    pub fn new<F: File<T>>(path: impl AsRef<Path>, band_indexes: Indexes) -> Result<Self> {
         let file = F::open(path)?;
 
         let transform = file.transform()?;

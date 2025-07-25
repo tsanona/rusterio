@@ -88,8 +88,8 @@ impl ViewBounds {
 
     pub fn shape(&self) -> Coord<usize> {
         Coord {
-            x: self.0.height(),
-            y: self.0.width(),
+            x: self.0.width(),
+            y: self.0.height(),
         }
     }
 
@@ -119,7 +119,7 @@ impl ViewBounds {
     } */
 }
 
-#[derive(ambassador::Delegate, Debug)]
+#[derive(ambassador::Delegate, Shrinkwrap, Debug)]
 #[delegate(GeometryTrait)]
 #[delegate(RectTrait)]
 pub struct ReadBounds(Rect<usize>);
@@ -144,6 +144,7 @@ impl From<(&ViewBounds, &ViewReadTransform)> for ReadBounds {
         let shape = value
             .1
             .apply(value.0.shape().try_cast().unwrap())
+            .map_each(f64::ceil)
             .try_cast()
             .unwrap();
         Self(Rect::new(offset, offset + shape))
@@ -152,14 +153,8 @@ impl From<(&ViewBounds, &ViewReadTransform)> for ReadBounds {
 
 impl From<(&GeoBounds, &GeoReadTransform)> for ReadBounds {
     fn from(value: (&GeoBounds, &GeoReadTransform)) -> Self {
-        Self(
-            value
-                .0
-                 .0
-                .affine_transform(value.1)
-                .try_map_coords(Coord::try_cast)
-                .unwrap(),
-        )
+        let read_bounds = value.0 .0.affine_transform(value.1); // get offset = min and shape and then correct as points so rect doesn't change them
+        Self(read_bounds.try_map_coords(Coord::try_cast).unwrap())
     }
 }
 
@@ -168,10 +163,9 @@ impl ReadBounds {
         (self.0.min() + Coord::from((0, self.0.height()))).x_y()
     }
 
-    /// (Height, Width)
+    /// (width,hight)
     pub fn shape(&self) -> (usize, usize) {
-        // should be fine to unwrap as distance should be non negative.
-        (self.0.height(), self.0.width())
+        (self.0.width(), self.0.height())
     }
 
     pub fn size(&self) -> usize {
