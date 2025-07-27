@@ -240,9 +240,13 @@ impl<T: DataType> SendSyncView<T> {
         Ok(unsafe { buff.assume_init() })
     }
 
+    pub fn bounds_shape(&self) -> (usize, usize) {
+        self.bounds.shape().x_y()
+    }
+
     /// Array shape (C, H, W)
     pub fn array_shape(&self) -> [usize; 3] {
-        let (width, hieght) = self.bounds.shape().x_y();
+        let (width, hieght) = self.bounds_shape();
         [self.bands.len(), hieght, width]
     }
 }
