@@ -1,7 +1,3 @@
-#![feature(maybe_uninit_slice)]
-#![feature(maybe_uninit_fill)]
-#![feature(new_zeroed_alloc)]
-
 #[macro_use]
 extern crate shrinkwraprs;
 extern crate geo_booleanop;
