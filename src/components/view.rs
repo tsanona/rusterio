@@ -144,7 +144,7 @@ impl<T: DataType> SendSyncView<T> {
     }
 
     pub fn read(&self) -> Result<Buffer<T, 3>> {
-        let mut buff = Buffer::new_uninit(self.array_shape()); // check if is writting correctly
+        let mut buff = Buffer::new(self.array_shape());
         let view_bounds = &self.bounds;
         buff.as_mut()
             .par_chunks_mut(view_bounds.size())
@@ -158,19 +158,17 @@ impl<T: DataType> SendSyncView<T> {
                         read_band
                             .reader
                             .read_into_slice(&read_bounds, &mut read_buff)?;
-                        let _ = band_buff.write_filled(read_buff[0]);
+                        let _ = band_buff.fill(read_buff[0]);
                         Ok::<_, RusterioError>(())
                     }
                     read_shape if read_shape.eq(&view_bounds.shape().x_y()) => {
                         // TODO: chunk!
-                        Ok(read_band.reader.read_into_slice(&read_bounds, unsafe {
-                            band_buff.assume_init_mut()
-                        })?)
+                        Ok(read_band.reader.read_into_slice(&read_bounds, band_buff)?)
                     }
                     read_shape => {
                         info!("band has different shape: {:?}", read_shape);
                         let read_buff_len = read_bounds.size();
-                        let mut read_buff = Buffer::new_zeroed([read_buff_len]);
+                        let mut read_buff = Buffer::new([read_buff_len]);
                         read_band
                             .reader
                             .read_into_slice(&read_bounds, read_buff.as_mut())?;
@@ -218,7 +216,7 @@ impl<T: DataType> SendSyncView<T> {
                                 let col_start = col_idx * ratio.x + left_block_width - block_width;
                                 let band_write_range =
                                     row_start + col_start..row_start + col_start + block_width;
-                                band_buff[band_write_range].write_filled(*read_pixel);
+                                band_buff[band_write_range].fill(*read_pixel);
                             }
 
                             let length = view_shape.x * block_hight;
@@ -237,7 +235,7 @@ impl<T: DataType> SendSyncView<T> {
                 }
             })
             .collect::<Result<Vec<()>>>()?;
-        Ok(unsafe { buff.assume_init() })
+        Ok(buff)
     }
 
     pub fn bounds_shape(&self) -> (usize, usize) {

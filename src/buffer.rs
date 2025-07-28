@@ -1,45 +1,29 @@
-use std::{marker::PhantomData, mem::MaybeUninit};
+use std::marker::PhantomData;
 
 use crate::components::DataType;
 
 #[derive(Debug)]
 pub struct Buffer<T, const ND: usize> {
     // Row-major
-    data: Box<[T]>,
+    data: Vec<T>,
     shape: [usize; ND],
     _t: PhantomData<T>,
 }
 
-impl<T: DataType, const ND: usize> Buffer<MaybeUninit<T>, ND> {
-    pub fn new_uninit(shape: [usize; ND]) -> Self {
-        Self {
-            data: Box::new_uninit_slice(shape.iter().product()),
-            shape,
-            _t: PhantomData,
-        }
-    }
-
-    pub unsafe fn assume_init(self) -> Buffer<T, ND> {
-        let data = self.data.assume_init();
-        Buffer::<T, ND> {
-            data: data,
-            shape: self.shape,
-            _t: PhantomData,
-        }
-    }
-}
-
 impl<T: DataType, const ND: usize> Buffer<T, ND> {
-    pub fn new_zeroed(shape: [usize; ND]) -> Self {
+    pub fn new(shape: [usize; ND]) -> Self {
+        let data_len = shape.into_iter().product();
+        let mut data = Vec::with_capacity(data_len);
+        data.resize(data_len, T::zero());
         Self {
-            data: unsafe { Box::new_zeroed_slice(shape.iter().product()).assume_init() },
+            data,
             shape,
             _t: PhantomData,
         }
     }
 
     pub fn to_owned_parts(self) -> (Box<[T]>, [usize; ND]) {
-        (self.data, self.shape)
+        (self.data.into_boxed_slice(), self.shape)
     }
 }
 
