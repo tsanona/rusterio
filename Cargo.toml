@@ -29,6 +29,7 @@ shrinkwraprs = "0.3.0"
 either = "1.15.0"
 num-traits = "0.2.19"
 ambassador = "0.4.1"
+serde = "1.0.219"
 
 [dev-dependencies]
 criterion = { version = "0.6.0", features = ["async", "async_tokio"] }
