@@ -1,16 +1,16 @@
-use std::{collections::HashSet, hash::RandomState};
+use std::{collections::HashSet, hash::RandomState, rc::Rc};
 
 use itertools::Itertools;
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 pub struct Indexes {
-    selection: Box<[usize]>,
+    selection: Rc<[usize]>,
     drop: bool,
 }
 
 impl<const N: usize> From<([usize; N], bool)> for Indexes {
     fn from(value: ([usize; N], bool)) -> Self {
-        let selection = Box::from(value.0);
+        let selection = Rc::from(value.0);
         let drop = value.1;
         Indexes { selection, drop }
     }
@@ -26,7 +26,7 @@ impl From<(std::ops::Range<usize>, bool)> for Indexes {
 
 impl<const N: usize> From<[usize; N]> for Indexes {
     fn from(value: [usize; N]) -> Self {
-        let selection = Box::from(value);
+        let selection = Rc::from(value);
         Indexes {
             selection,
             drop: false,
@@ -45,15 +45,14 @@ impl From<std::ops::Range<usize>> for Indexes {
 }
 
 impl Indexes {
-    pub fn indexes_from(self, collection_len: usize) -> Box<[usize]> {
+    pub fn indexes_from(self, collection_len: usize) -> Rc<[usize]> {
         let idxs = self.selection;
         if self.drop {
-            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(idxs);
-            HashSet::from_iter(0..collection_len)
+            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(Box::<[usize]>::from(idxs.as_ref()));
+            Rc::from_iter(HashSet::from_iter(0..collection_len)
                 .difference(&drop_idxs)
                 .sorted()
-                .map(|idx| *idx)
-                .collect()
+                .map(|idx| *idx))
         } else {
             idxs
         }
@@ -68,7 +67,7 @@ impl Indexes {
 
     pub fn all() -> Self {
         Self {
-            selection: Box::from([]),
+            selection: Rc::from([]),
             drop: true,
         }
     }
