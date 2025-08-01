@@ -2,7 +2,7 @@ use std::{collections::HashSet, hash::RandomState};
 
 use itertools::Itertools;
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct Indexes {
     selection: Box<[usize]>,
     drop: bool,
