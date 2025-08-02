@@ -1,3 +1,5 @@
+mod band;
+
 use geo::{Coord, MapCoords};
 use log::info;
 use num::Zero;
@@ -7,61 +9,60 @@ use std::{collections::HashSet, fmt::Debug, ops::Rem, rc::Rc, sync::Arc};
 use crate::{
     buffer::Buffer,
     components::{
-        band::{BandInfo, BandReader},
         bounds::{Bounds, GeoBounds, PixelBounds, ViewBounds},
         raster::{band::RasterBand, group::RasterGroupInfo},
         transforms::ViewReadTransform,
+        view::band::{ViewBand, ReadBand},
         DataType,
     },
-    errors::{Result, RusterioError},
     intersection::Intersection,
+    errors::{Result, RusterioError},
     CoordUtils,
 };
 
-#[derive(Debug, Clone)]
-pub struct ViewBand<T: DataType> {
-    info: Rc<dyn BandInfo>,
-    /// Transform from [RasterView] pixel space to band pixel space.
-    transform: ViewReadTransform,
-    reader: Arc<dyn BandReader<T>>,
+pub trait Len {
+    fn len(&self) -> usize;
 }
 
-impl<T: DataType> From<(ViewReadTransform, &RasterBand<T>)> for ViewBand<T> {
-    fn from(value: (ViewReadTransform, &RasterBand<T>)) -> Self {
-        let (transform, RasterBand { info, reader }) = value;
-        ViewBand {
-            transform,
-            info: Rc::clone(info),
-            reader: Arc::clone(reader),
-        }
+impl<T> Len for Rc<[T]> {
+    fn len(&self) -> usize {
+        self.as_ref().len()
     }
 }
 
-pub struct ReadBand<T: DataType> {
-    transform: ViewReadTransform,
-    reader: Arc<dyn BandReader<T>>,
-}
-
-impl<T: DataType> From<&ViewBand<T>> for ReadBand<T> {
-    fn from(value: &ViewBand<T>) -> Self {
-        let ViewBand {
-            transform, reader, ..
-        } = value;
-        ReadBand {
-            transform: *transform,
-            reader: Arc::clone(reader),
-        }
+impl<T> Len for Arc<[T]> {
+    fn len(&self) -> usize {
+        self.as_ref().len()
     }
 }
 
-//#[derive(Clone)]
-pub struct View<T: DataType> {
-    /// Shape of array when read.
+pub struct View<Ba: Clone + Len> {
     bounds: ViewBounds,
-    bands: Rc<[ViewBand<T>]>,
+    bands: Ba
 }
 
-impl<T: DataType> Debug for View<T> {
+pub type InfoView<T> = View<Rc<[ViewBand<T>]>>;
+pub type ReadView<T> = View<Arc<[ReadBand<T>]>>;
+
+impl<Ba: Clone + Len> View<Ba> {
+    pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
+        let bounds = self.bounds.intersection(&bounds)?;
+        let bands = self.bands.clone();
+        Ok(Self{bounds, bands})
+    }
+
+    pub fn bounds_shape(&self) -> (usize, usize) {
+        self.bounds.shape().x_y()
+    }
+
+    /// Array shape (C, H, W)
+    pub fn array_shape(&self) -> [usize; 3] {
+        let (width, height) = self.bounds_shape();
+        [self.bands.len(), height, width]
+    }
+}
+
+impl<T: DataType> Debug for InfoView<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let f = &mut f.debug_struct("View");
         let bands: Vec<String> = self
@@ -75,16 +76,8 @@ impl<T: DataType> Debug for View<T> {
     }
 }
 
-impl<T> View<T>
-where
-    T: DataType,
-{
-    fn init(bounds: ViewBounds, bands: Rc<[ViewBand<T>]>) -> Self {
-        let view = Self { bounds, bands };
-        info!("new {view:?}");
-        view
-    }
 
+impl<T: DataType> InfoView<T> {
     pub fn new(
         bounds: GeoBounds,
         selected_bands: Box<[(&RasterGroupInfo, &RasterBand<T>)]>,
@@ -103,13 +96,7 @@ where
             let transform = ViewReadTransform::new(&view_bounds, &bounds, &group_info.transform);
             ViewBand::from((transform, *raster_band))
         }));
-        Ok(Self::init(view_bounds, bands))
-    }
-
-    pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
-        let bounds: ViewBounds = self.bounds.intersection(&bounds)?;
-        let bands = Rc::clone(&self.bands);
-        Ok(Self::init(bounds, bands))
+        Ok(Self{bounds: view_bounds, bands})
     }
 
     fn par_bands(&self) -> Box<[ReadBand<T>]> {
@@ -119,30 +106,18 @@ where
             .collect()
     }
 
+    pub fn to_send_sync(self) -> ReadView<T> {
+        let bands = Arc::from_iter(self.par_bands());
+        let bounds = self.bounds;
+        View { bounds, bands }
+    }
+
     pub fn read(self) -> Result<Buffer<T, 3>> {
         self.to_send_sync().read()
     }
-
-    pub fn to_send_sync(self) -> SendSyncView<T> {
-        let bands = Arc::from_iter(self.par_bands());
-        let bounds = self.bounds;
-        SendSyncView { bounds, bands }
-    }
 }
 
-pub struct SendSyncView<T: DataType> {
-    /// Shape of array when read.
-    bounds: ViewBounds,
-    bands: Arc<[ReadBand<T>]>,
-}
-
-impl<T: DataType> SendSyncView<T> {
-    pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
-        let bounds = self.bounds.intersection(&bounds)?;
-        let bands = Arc::clone(&self.bands);
-        Ok(Self { bounds, bands })
-    }
-
+impl<T: DataType> ReadView<T> {
     pub fn read(&self) -> Result<Buffer<T, 3>> {
         let mut buff = Buffer::new(self.array_shape());
         let view_bounds = &self.bounds;
@@ -236,15 +211,5 @@ impl<T: DataType> SendSyncView<T> {
             })
             .collect::<Result<Vec<()>>>()?;
         Ok(buff)
-    }
-
-    pub fn bounds_shape(&self) -> (usize, usize) {
-        self.bounds.shape().x_y()
-    }
-
-    /// Array shape (C, H, W)
-    pub fn array_shape(&self) -> [usize; 3] {
-        let (width, hieght) = self.bounds_shape();
-        [self.bands.len(), hieght, width]
     }
 }

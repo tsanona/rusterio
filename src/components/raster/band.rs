@@ -15,6 +15,7 @@ pub struct RasterBand<T: DataType> {
     pub reader: Arc<dyn BandReader<T>>,
 }
 
+/// Collection to access [RasterBand]s and their [RasterGroup]s.
 pub struct RasterBands<T: DataType>(Vec<RasterGroup<T>>);
 
 impl<T: DataType> From<RasterGroup<T>> for RasterBands<T> {
@@ -24,21 +25,23 @@ impl<T: DataType> From<RasterGroup<T>> for RasterBands<T> {
 }
 
 impl<T: DataType> RasterBands<T> {
+    /// Iterator over bands.
     pub fn iter(&self) -> impl Iterator<Item = &RasterBand<T>> {
         self.0.iter().flat_map(|group| group.bands.iter())
     }
 
-    pub fn append(&mut self, other: &mut RasterBands<T>) {
-        self.0.append(other.0.as_mut())
-    }
-
+    /// Iterate over band groups.
     pub fn groups(&self) -> impl Iterator<Item = &RasterGroup<T>> {
         self.0.iter()
     }
 
-    pub fn group_bands(&self) -> Vec<(&RasterGroupInfo, &RasterBand<T>)> {
+    /// Iterate over group indexed bands.
+    pub fn group_band(&self) -> impl Iterator<Item = (&RasterGroupInfo, &RasterBand<T>)> {
         self.groups()
             .flat_map(|group| group.bands.iter().map(move |band| (&group.info, band)))
-            .collect()
+    }
+
+    pub fn append(&mut self, other: &mut RasterBands<T>) {
+        self.0.append(other.0.as_mut())
     }
 }

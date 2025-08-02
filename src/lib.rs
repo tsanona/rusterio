@@ -18,7 +18,7 @@ pub use components::{
     bounds::{Bounds, ViewBounds},
     engines::gdal_engine,
     raster::Raster,
-    view::{SendSyncView, View},
+    view::{ReadView, InfoView},
     DataType,
 };
 pub use crs_geo::CrsGeometry;
@@ -134,7 +134,7 @@ mod tests {
             .unwrap();
         let buff = clipped_view.read().unwrap();
         info!(
-            "data len: {:?}\ndata shape: {:?}\nmatches {:}",
+            "\ndata len: {:?}\ndata shape: {:?}\nmatches {:}",
             &buff.len(),
             &buff.shape(),
             &buff.shape().iter().product::<usize>() == &buff.len()
@@ -196,7 +196,7 @@ mod tests {
         let view = sentinel_raster
             .view(None, Indexes::from([0, 4, 15]))
             .unwrap()
-            .clip(ViewBounds::new((0, 0), (1000, 1000)))
+            .clip(ViewBounds::new((500, 0), (500, 1000)))
             .unwrap();
 
         let (data, shape) = view.read().unwrap().to_owned_parts();

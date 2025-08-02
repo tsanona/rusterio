@@ -12,7 +12,7 @@ use crate::{
             band::RasterBands,
             group::{RasterGroup, RasterGroupInfo},
         },
-        view::View,
+        view::InfoView,
         DataType,
     },
     errors::Result,
@@ -20,8 +20,7 @@ use crate::{
     Indexes,
 };
 
-/// Collection of bands that share size,
-/// resolution, data type.
+/// Collection of [band::RasterBand] that cover [GeoBounds].
 pub struct Raster<T: DataType> {
     /// Bounds of full raster
     /// in 'geospace' with raster crs
@@ -83,14 +82,14 @@ impl<T: DataType> Raster<T> {
         Ok(Self::init(stack_geo_bounds, stack_bands))
     }
 
-    pub fn view(&self, bounds: Option<GeoBounds>, band_indexes: Indexes) -> Result<View<T>> {
+    pub fn view(&self, bounds: Option<GeoBounds>, band_indexes: Indexes) -> Result<InfoView<T>> {
         let mut view_geo_bounds = self.bounds.clone();
         if let Some(geo_bounds) = bounds {
             view_geo_bounds = view_geo_bounds.intersection(&geo_bounds)?
         }
 
-        let view_group_info_bands = band_indexes.select_from(self.bands.group_bands());
+        let view_group_info_bands = band_indexes.select_from(self.bands.group_band().collect());
 
-        View::new(view_geo_bounds, view_group_info_bands)
+        InfoView::new(view_geo_bounds, view_group_info_bands)
     }
 }

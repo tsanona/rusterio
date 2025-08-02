@@ -6,8 +6,6 @@ use crate::{
     CoordUtils,
 };
 
-/// Affine transform between crs
-/// and reading pixel space.
 #[derive(Shrinkwrap, Debug)]
 pub struct ReadGeoTransform {
     #[shrinkwrap(main_field)]
@@ -29,6 +27,8 @@ impl ReadGeoTransform {
     }
 }
 
+/// Affine transform between crs
+/// and reading pixel space.
 #[derive(Shrinkwrap, Debug)]
 pub struct GeoReadTransform {
     #[shrinkwrap(main_field)]

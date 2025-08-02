@@ -4,6 +4,7 @@ use crate::components::{
     raster::band::RasterBand, transforms::GeoReadTransform, DataType, Metadata,
 };
 
+/// Info for [RasterGroup].
 #[derive(Debug)]
 pub struct RasterGroupInfo {
     pub description: String,
@@ -34,6 +35,7 @@ impl RasterGroupInfo {
     }
 }
 
+/// Collection or [RasterBand] that share the same [RasterGroupInfo]
 pub struct RasterGroup<T: DataType> {
     pub info: RasterGroupInfo,
     pub bands: Box<[RasterBand<T>]>,
