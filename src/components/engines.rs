@@ -3,9 +3,9 @@ use std::{collections::HashMap, fmt::Debug, marker::PhantomData, path::Path, rc:
 use crate::{
     components::{
         band::{BandInfo, BandReader},
-        bounds::{GeoBounds, ReadBounds},
+        bounds::{Bounds, GeoBounds, ReadBounds},
         file::File,
-        raster::RasterBand,
+        raster::band::RasterBand,
         transforms::ReadGeoTransform,
         DataType, Metadata,
     },
@@ -170,16 +170,8 @@ pub mod gdal_engine {
         fn read_into_slice(&self, bounds: &ReadBounds, slice: &mut [T]) -> Result<()> {
             let dataset = GdalDataset::open(&self.0)?;
             let rasterband = dataset.rasterband(self.1)?;
-            let window_shape = bounds.shape();
+            let window_shape = bounds.shape().x_y();
             let offset = bounds.min().try_cast()?.x_y();
-            //let offset = (offset.0, offset.1);
-
-            //let offset = (offset.0 + window_shape.0 as isize, offset.1);
-            /* if T::gdal_ordinal() != rasterband.band_type() as u32 {
-                Err(gdal::errors::GdalError::BadArgument(
-                    "result array type must match band data types".to_string(),
-                ))?
-            } */
             info!("reading at offset: {:?}, shape: {:?}", offset, window_shape);
             Ok(rasterband.read_into_slice::<T>(offset, window_shape, window_shape, slice, None)?)
         }

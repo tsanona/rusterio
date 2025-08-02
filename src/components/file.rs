@@ -1,11 +1,14 @@
 use std::{collections::HashMap, fmt::Debug, path::Path};
 
 use crate::{
-    components::{bounds::GeoBounds, raster::RasterBand, transforms::ReadGeoTransform, DataType},
+    components::{
+        bounds::GeoBounds, raster::band::RasterBand, transforms::ReadGeoTransform, DataType,
+    },
     errors::Result,
     indexes::Indexes,
 };
 
+/// Trait to access raster file information.
 pub trait File<T: DataType>: Debug + Sized {
     fn open(path: impl AsRef<Path>) -> Result<Self>;
     fn description(&self) -> Result<String>;

@@ -2,7 +2,7 @@ use geo::{AffineTransform, Coord};
 use std::rc::Rc;
 
 use crate::{
-    components::bounds::{GeoBounds, ViewBounds},
+    components::bounds::{Bounds, GeoBounds, ViewBounds},
     CoordUtils,
 };
 

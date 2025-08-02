@@ -48,11 +48,14 @@ impl Indexes {
     pub fn indexes_from(self, collection_len: usize) -> Rc<[usize]> {
         let idxs = self.selection;
         if self.drop {
-            let drop_idxs: HashSet<usize, RandomState> = HashSet::from_iter(Box::<[usize]>::from(idxs.as_ref()));
-            Rc::from_iter(HashSet::from_iter(0..collection_len)
-                .difference(&drop_idxs)
-                .sorted()
-                .map(|idx| *idx))
+            let drop_idxs: HashSet<usize, RandomState> =
+                HashSet::from_iter(Box::<[usize]>::from(idxs.as_ref()));
+            Rc::from_iter(
+                HashSet::from_iter(0..collection_len)
+                    .difference(&drop_idxs)
+                    .sorted()
+                    .map(|idx| *idx),
+            )
         } else {
             idxs
         }

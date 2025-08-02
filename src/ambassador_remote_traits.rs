@@ -57,3 +57,31 @@ pub trait RectTrait {
     fn min<'a>(&'a self) -> Self::CoordType<'a>;
     fn max<'a>(&'a self) -> Self::CoordType<'a>;
 }
+
+#[ambassador::delegatable_trait_remote]
+pub trait MapCoords<T, NT> {
+    type Output;
+
+    fn map_coords(&self, func: impl Fn(Coord<T>) -> Coord<NT> + Copy) -> Self::Output
+    where
+        T: CoordNum,
+        NT: CoordNum;
+    #[cfg_attr(feature = "use-proj", doc = "```")]
+    #[cfg_attr(not(feature = "use-proj"), doc = "```ignore")]
+    fn try_map_coords<E>(
+        &self,
+        func: impl Fn(Coord<T>) -> std::result::Result<Coord<NT>, E> + Copy,
+    ) -> std::result::Result<Self::Output, E>
+    where
+        T: CoordNum,
+        NT: CoordNum;
+}
+
+#[ambassador::delegatable_trait_remote]
+pub trait Area<T>
+where
+    T: CoordNum,
+{
+    fn signed_area(&self) -> T;
+    fn unsigned_area(&self) -> T;
+}

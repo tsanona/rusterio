@@ -10,8 +10,8 @@ mod errors;
 mod indexes;
 mod intersection;
 
-use geo::{Coord, CoordNum};
-use geo_traits::CoordTrait;
+use geo::{Coord, CoordNum, Line, MapCoords};
+use geo_traits::{CoordTrait, LineTrait};
 
 pub use buffer::Buffer;
 pub use components::{
@@ -71,6 +71,19 @@ trait CoordUtils: CoordTrait + Sized {
 }
 
 impl<T: CoordNum> CoordUtils for Coord<T> {}
+
+trait LineUtils<T: CoordNum, NT: CoordNum + num::NumCast>:
+    LineTrait + Sized + MapCoords<T, NT>
+{
+    fn try_cast(self) -> Result<Self::Output>
+    where
+        Self::T: num::NumCast,
+    {
+        self.try_map_coords(Coord::try_cast)
+    }
+}
+
+impl<T: CoordNum, NT: CoordNum + num::NumCast> LineUtils<T, NT> for Line<T> {}
 
 fn try_cast<T: num::NumCast, U: num::NumCast>(val: T) -> Result<U> {
     num_traits::cast(val).ok_or(RusterioError::Uncastable)

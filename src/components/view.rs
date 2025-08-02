@@ -1,4 +1,4 @@
-use geo::MapCoords;
+use geo::{Coord, MapCoords};
 use log::info;
 use num::Zero;
 use rayon::prelude::*;
@@ -8,8 +8,8 @@ use crate::{
     buffer::Buffer,
     components::{
         band::{BandInfo, BandReader},
-        bounds::{GeoBounds, ReadBounds, ViewBounds},
-        raster::{RasterBand, RasterGroupInfo},
+        bounds::{Bounds, GeoBounds, PixelBounds, ViewBounds},
+        raster::{band::RasterBand, group::RasterGroupInfo},
         transforms::ViewReadTransform,
         DataType,
     },
@@ -20,9 +20,9 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ViewBand<T: DataType> {
+    info: Rc<dyn BandInfo>,
     /// Transform from [RasterView] pixel space to band pixel space.
     transform: ViewReadTransform,
-    info: Rc<dyn BandInfo>,
     reader: Arc<dyn BandReader<T>>,
 }
 
@@ -37,17 +37,17 @@ impl<T: DataType> From<(ViewReadTransform, &RasterBand<T>)> for ViewBand<T> {
     }
 }
 
-pub struct SendSyncBand<T: DataType> {
+pub struct ReadBand<T: DataType> {
     transform: ViewReadTransform,
     reader: Arc<dyn BandReader<T>>,
 }
 
-impl<T: DataType> From<&ViewBand<T>> for SendSyncBand<T> {
+impl<T: DataType> From<&ViewBand<T>> for ReadBand<T> {
     fn from(value: &ViewBand<T>) -> Self {
         let ViewBand {
             transform, reader, ..
         } = value;
-        SendSyncBand {
+        ReadBand {
             transform: *transform,
             reader: Arc::clone(reader),
         }
@@ -97,7 +97,7 @@ where
             .into_iter()
             .map(|group_info| &group_info.transform);
 
-        let view_bounds = ViewBounds::from(&bounds, view_transforms)?;
+        let view_bounds = bounds.build_raster_view_bounds(view_transforms)?;
 
         let bands = Rc::from_iter(selected_bands.iter().map(|(group_info, raster_band)| {
             let transform = ViewReadTransform::new(&view_bounds, &bounds, &group_info.transform);
@@ -112,10 +112,10 @@ where
         Ok(Self::init(bounds, bands))
     }
 
-    fn par_bands(&self) -> Box<[SendSyncBand<T>]> {
+    fn par_bands(&self) -> Box<[ReadBand<T>]> {
         self.bands
             .iter()
-            .map(|view_band| SendSyncBand::from(view_band))
+            .map(|view_band| ReadBand::from(view_band))
             .collect()
     }
 
@@ -133,7 +133,7 @@ where
 pub struct SendSyncView<T: DataType> {
     /// Shape of array when read.
     bounds: ViewBounds,
-    bands: Arc<[SendSyncBand<T>]>,
+    bands: Arc<[ReadBand<T>]>,
 }
 
 impl<T: DataType> SendSyncView<T> {
@@ -149,11 +149,11 @@ impl<T: DataType> SendSyncView<T> {
         buff.as_mut()
             .par_chunks_mut(view_bounds.size())
             .zip(self.bands.into_par_iter())
-            .map(|(band_buff, read_band)| {
-                let read_bounds = ReadBounds::from((view_bounds, &read_band.transform));
+            .map(|(mut band_buff, read_band)| {
+                let read_bounds = view_bounds.as_read_bounds(&read_band.transform);
                 info!("reading {:?} as {:?}", view_bounds, read_bounds);
                 match read_bounds.shape() {
-                    (1, 1) => {
+                    Coord { x: 1, y: 1 } => {
                         let mut read_buff = [T::zero()];
                         read_band
                             .reader
@@ -161,8 +161,8 @@ impl<T: DataType> SendSyncView<T> {
                         let _ = band_buff.fill(read_buff[0]);
                         Ok::<_, RusterioError>(())
                     }
-                    read_shape if read_shape.eq(&view_bounds.shape().x_y()) => {
-                        // TODO: chunk!
+                    read_shape if read_shape.eq(&view_bounds.shape()) => {
+                        // TODO: chunk!?
                         Ok(read_band.reader.read_into_slice(&read_bounds, band_buff)?)
                     }
                     read_shape => {
@@ -197,15 +197,17 @@ impl<T: DataType> SendSyncView<T> {
                         let view_shape = view_bounds.shape();
 
                         for (row_idx, read_row) in
-                            read_buff.as_mut().chunks_exact(read_shape.0).enumerate()
+                            read_buff.as_mut().chunks_exact(read_shape.x).enumerate()
                         {
                             let block_hight = if row_idx.is_zero() {
                                 top_block_hight
                             } else {
                                 ratio.y
                             };
-                            let row_start =
-                                (row_idx * ratio.y + top_block_hight - block_hight) * view_shape.x;
+
+                            let block_buff: &mut [T];
+                            (block_buff, band_buff) =
+                                band_buff.split_at_mut(view_shape.x * block_hight);
 
                             for (col_idx, read_pixel) in read_row.iter().enumerate() {
                                 let block_width = if col_idx.is_zero() {
@@ -214,13 +216,11 @@ impl<T: DataType> SendSyncView<T> {
                                     ratio.x
                                 };
                                 let col_start = col_idx * ratio.x + left_block_width - block_width;
-                                let band_write_range =
-                                    row_start + col_start..row_start + col_start + block_width;
-                                band_buff[band_write_range].fill(*read_pixel);
+                                let band_write_range = col_start..col_start + block_width;
+                                block_buff[band_write_range].fill(*read_pixel);
                             }
 
-                            let length = view_shape.x * block_hight;
-                            band_buff[row_start..row_start + length]
+                            block_buff
                                 .chunks_exact_mut(view_shape.x)
                                 .into_iter()
                                 //.par_chunks_exact(view_shape_x)
