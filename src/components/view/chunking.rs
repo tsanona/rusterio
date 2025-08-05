@@ -62,7 +62,6 @@ impl ResolutionChunker {
             band_buff[row_start..row_start + length]
                 .chunks_exact_mut(self.view_width)
                 .into_iter()
-                //.par_chunks_exact(view_shape_x)
                 .reduce(|lhc, mut _rhc| {
                     _rhc.copy_from_slice(lhc);
                     _rhc
@@ -71,7 +70,7 @@ impl ResolutionChunker {
         Ok(())
     }
 
-    pub fn read_row_idx_to_block_height(&self, row_idx: usize) -> usize {
+    fn read_row_idx_to_block_height(&self, row_idx: usize) -> usize {
         if row_idx.is_zero() {
             self.top_block_height
         } else {
@@ -79,7 +78,7 @@ impl ResolutionChunker {
         }
     }
 
-    pub fn read_col_idx_to_block_width(&self, col_idx: usize) -> usize {
+    fn read_col_idx_to_block_width(&self, col_idx: usize) -> usize {
         if col_idx.is_zero() {
             self.left_block_width
         } else {

@@ -129,6 +129,7 @@ impl<T: DataType> ReadView<T> {
             .par_chunks_mut(view_bounds.size())
             .zip(self.bands.into_par_iter())
             .map(|(band_buff, read_band)| {
+                // TODO: chunk!?
                 let read_bounds = &view_bounds.as_read_bounds(&read_band.transform);
                 info!("reading {:?} as {:?}", view_bounds, read_bounds);
                 match read_bounds.shape() {
@@ -136,7 +137,6 @@ impl<T: DataType> ReadView<T> {
                         band_buff.fill(read_band.reader.read_pixel(read_bounds.offset())?),
                     ),
                     read_shape if read_shape == view_bounds.shape() => {
-                        // TODO: chunk!?
                         Ok(read_band.reader.read_into_slice(read_bounds, band_buff)?)
                     }
                     read_shape => {
