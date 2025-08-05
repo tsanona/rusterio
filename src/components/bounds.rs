@@ -26,6 +26,14 @@ where
     fn shape(&self) -> Coord<<Self as GeometryTrait>::T> {
         self.max().to_coord() - self.min().to_coord()
     }
+
+    fn width(&self) -> Self::T {
+        self.shape().x
+    }
+
+    fn height(&self) -> Self::T {
+        self.shape().y
+    }
 }
 
 /// Trait for shared PixelBound implementations.
@@ -34,13 +42,13 @@ pub trait PixelBounds: Bounds + Area<Self::T>
 where
     Self::T: CoordNum + Integer,
 {
-    /* /// Offset coords for pixel bounds.
+    /// Offset coords for pixel bounds.
     ///
     ///  - [ViewBounds]: Top left pixel of the viewing window.
     ///  - [ReadBounds]: Depends of [GeoReadTransform].
     fn offset<'a>(&'a self) -> Self::CoordType<'a> {
         self.min()
-    } */
+    }
 
     /// Number of pixels within bounds.
     fn size(&self) -> Self::T {

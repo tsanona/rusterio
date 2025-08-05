@@ -1,12 +1,10 @@
 use std::{fmt::Debug, rc::Rc, sync::Arc};
 
-use crate::{
-    components::{
-        band::{BandInfo, BandReader},
-        raster::band::RasterBand,
-        transforms::ViewReadTransform,
-        DataType,
-    }
+use crate::components::{
+    band::{BandInfo, BandReader},
+    raster::band::RasterBand,
+    transforms::ViewReadTransform,
+    DataType,
 };
 
 #[derive(Debug, Clone)]

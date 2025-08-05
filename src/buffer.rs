@@ -28,6 +28,10 @@ impl<T: DataType, const ND: usize> Buffer<T, ND> {
 }
 
 impl<T, const ND: usize> Buffer<T, ND> {
+    pub fn as_ref(&self) -> &[T] {
+        &self.data
+    }
+
     pub fn as_mut(&mut self) -> &mut [T] {
         &mut self.data
     }

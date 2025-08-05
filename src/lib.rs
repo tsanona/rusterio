@@ -18,7 +18,7 @@ pub use components::{
     bounds::{Bounds, ViewBounds},
     engines::gdal_engine,
     raster::Raster,
-    view::{ReadView, InfoView},
+    view::{InfoView, ReadView},
     DataType,
 };
 pub use crs_geo::CrsGeometry;

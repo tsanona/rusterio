@@ -16,14 +16,14 @@ use crate::{
 /// Implementations for gdal
 pub mod gdal_engine {
 
-    use crate::{crs_geo::CrsGeometry, CoordUtils};
+    use crate::{components::bounds::PixelBounds, crs_geo::CrsGeometry, Buffer, CoordUtils};
 
     use super::*;
     use gdal::{
-        raster::GdalType, Dataset as GdalDataset, Metadata as GdalMetadata,
-        MetadataEntry as GdalMetadataEntry,
+        raster::{GdalType, RasterBand as GdalRasterBand},
+        Dataset as GdalDataset, Metadata as GdalMetadata, MetadataEntry as GdalMetadataEntry,
     };
-    use geo::{AffineOps, Point, Rect};
+    use geo::{AffineOps, Coord, Point, Rect};
     use geo_traits::RectTrait;
     use log::info;
 
@@ -166,14 +166,65 @@ pub mod gdal_engine {
     #[derive(Debug)]
     struct GdalBandReader(Arc<Path>, usize);
 
+    use self_cell::self_cell;
+
+    self_cell!(
+        struct RasterBandCell {
+            owner: GdalDataset,
+
+            #[covariant]
+            dependent: GdalRasterBand,
+        }
+    );
+
+    fn build_rasterband_cell(path: impl AsRef<Path>, idx: usize) -> Result<RasterBandCell> {
+        // Create owning String on stack.
+        let dataset = GdalDataset::open(path)?;
+
+        // Move String into AstCell, then build Ast inplace.
+        Ok(RasterBandCell::try_new(dataset, |dataset| {
+            dataset.rasterband(idx)
+        })?)
+    }
+
+    impl GdalBandReader {
+        fn raster_band(&self) -> Result<RasterBandCell> {
+            build_rasterband_cell(self.0.as_ref(), self.1)
+        }
+    }
+
     impl<T: GdalDataType> BandReader<T> for GdalBandReader {
         fn read_into_slice(&self, bounds: &ReadBounds, slice: &mut [T]) -> Result<()> {
-            let dataset = GdalDataset::open(&self.0)?;
-            let rasterband = dataset.rasterband(self.1)?;
+            let rasterband = self.raster_band()?;
             let window_shape = bounds.shape().x_y();
             let offset = bounds.min().try_cast()?.x_y();
             info!("reading at offset: {:?}, shape: {:?}", offset, window_shape);
-            Ok(rasterband.read_into_slice::<T>(offset, window_shape, window_shape, slice, None)?)
+            Ok(rasterband.borrow_dependent().read_into_slice::<T>(
+                offset,
+                window_shape,
+                window_shape,
+                slice,
+                None,
+            )?)
+        }
+        fn read_to_buffer(&self, bounds: &ReadBounds) -> Result<Buffer<T, 1>> {
+            let mut buff = Buffer::new([bounds.size()]);
+            self.read_into_slice(bounds, buff.as_mut()).map(|_| buff)
+        }
+        fn read_pixel(&self, offset: Coord<usize>) -> Result<T> {
+            let rasterband = self.raster_band()?;
+            let window_shape = (1, 1);
+            let offset = offset.try_cast()?.x_y();
+            let pixel_buff = &mut [T::zero()];
+            info!("reading pixel at offset: {:?}", offset);
+            rasterband.borrow_dependent().read_into_slice::<T>(
+                offset,
+                window_shape,
+                window_shape,
+                pixel_buff,
+                None,
+            )?;
+            Ok(pixel_buff[0])
         }
     }
 }

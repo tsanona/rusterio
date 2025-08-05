@@ -1,10 +1,10 @@
 mod band;
+mod chunking;
 
-use geo::{Coord, MapCoords};
+use geo::Coord;
 use log::info;
-use num::Zero;
 use rayon::prelude::*;
-use std::{collections::HashSet, fmt::Debug, ops::Rem, rc::Rc, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, rc::Rc, sync::Arc};
 
 use crate::{
     buffer::Buffer,
@@ -12,12 +12,14 @@ use crate::{
         bounds::{Bounds, GeoBounds, PixelBounds, ViewBounds},
         raster::{band::RasterBand, group::RasterGroupInfo},
         transforms::ViewReadTransform,
-        view::band::{ViewBand, ReadBand},
+        view::{
+            band::{ReadBand, ViewBand},
+            chunking::ResolutionChunker,
+        },
         DataType,
     },
-    intersection::Intersection,
     errors::{Result, RusterioError},
-    CoordUtils,
+    intersection::Intersection,
 };
 
 pub trait Len {
@@ -38,7 +40,7 @@ impl<T> Len for Arc<[T]> {
 
 pub struct View<Ba: Clone + Len> {
     bounds: ViewBounds,
-    bands: Ba
+    bands: Ba,
 }
 
 pub type InfoView<T> = View<Rc<[ViewBand<T>]>>;
@@ -48,7 +50,7 @@ impl<Ba: Clone + Len> View<Ba> {
     pub fn clip(&self, bounds: ViewBounds) -> Result<Self> {
         let bounds = self.bounds.intersection(&bounds)?;
         let bands = self.bands.clone();
-        Ok(Self{bounds, bands})
+        Ok(Self { bounds, bands })
     }
 
     pub fn bounds_shape(&self) -> (usize, usize) {
@@ -76,7 +78,6 @@ impl<T: DataType> Debug for InfoView<T> {
     }
 }
 
-
 impl<T: DataType> InfoView<T> {
     pub fn new(
         bounds: GeoBounds,
@@ -96,7 +97,10 @@ impl<T: DataType> InfoView<T> {
             let transform = ViewReadTransform::new(&view_bounds, &bounds, &group_info.transform);
             ViewBand::from((transform, *raster_band))
         }));
-        Ok(Self{bounds: view_bounds, bands})
+        Ok(Self {
+            bounds: view_bounds,
+            bands,
+        })
     }
 
     fn par_bands(&self) -> Box<[ReadBand<T>]> {
@@ -124,88 +128,22 @@ impl<T: DataType> ReadView<T> {
         buff.as_mut()
             .par_chunks_mut(view_bounds.size())
             .zip(self.bands.into_par_iter())
-            .map(|(mut band_buff, read_band)| {
-                let read_bounds = view_bounds.as_read_bounds(&read_band.transform);
+            .map(|(band_buff, read_band)| {
+                let read_bounds = &view_bounds.as_read_bounds(&read_band.transform);
                 info!("reading {:?} as {:?}", view_bounds, read_bounds);
                 match read_bounds.shape() {
-                    Coord { x: 1, y: 1 } => {
-                        let mut read_buff = [T::zero()];
-                        read_band
-                            .reader
-                            .read_into_slice(&read_bounds, &mut read_buff)?;
-                        let _ = band_buff.fill(read_buff[0]);
-                        Ok::<_, RusterioError>(())
-                    }
-                    read_shape if read_shape.eq(&view_bounds.shape()) => {
+                    Coord { x: 1, y: 1 } => Ok::<_, RusterioError>(
+                        band_buff.fill(read_band.reader.read_pixel(read_bounds.offset())?),
+                    ),
+                    read_shape if read_shape == view_bounds.shape() => {
                         // TODO: chunk!?
-                        Ok(read_band.reader.read_into_slice(&read_bounds, band_buff)?)
+                        Ok(read_band.reader.read_into_slice(read_bounds, band_buff)?)
                     }
                     read_shape => {
                         info!("band has different shape: {:?}", read_shape);
-                        let read_buff_len = read_bounds.size();
-                        let mut read_buff = Buffer::new([read_buff_len]);
-                        read_band
-                            .reader
-                            .read_into_slice(&read_bounds, read_buff.as_mut())?;
-
-                        let ratio = read_band.transform.ratio();
-
-                        info!(
-                            "read shape: {:?}, ratio: {:?}, view shape: {:?}",
-                            read_shape,
-                            ratio,
-                            view_bounds.shape()
-                        );
-                        let relative_bounds =
-                            view_bounds.map_coords(|coord| coord.operate(&ratio, usize::rem));
-
-                        let left_block_width = if relative_bounds.min().x.is_zero() {
-                            ratio.x
-                        } else {
-                            ratio.x - relative_bounds.min().x
-                        };
-                        let top_block_hight = if relative_bounds.max().y.is_zero() {
-                            ratio.y
-                        } else {
-                            relative_bounds.max().y
-                        };
-                        let view_shape = view_bounds.shape();
-
-                        for (row_idx, read_row) in
-                            read_buff.as_mut().chunks_exact(read_shape.x).enumerate()
-                        {
-                            let block_hight = if row_idx.is_zero() {
-                                top_block_hight
-                            } else {
-                                ratio.y
-                            };
-
-                            let block_buff: &mut [T];
-                            (block_buff, band_buff) =
-                                band_buff.split_at_mut(view_shape.x * block_hight);
-
-                            for (col_idx, read_pixel) in read_row.iter().enumerate() {
-                                let block_width = if col_idx.is_zero() {
-                                    left_block_width
-                                } else {
-                                    ratio.x
-                                };
-                                let col_start = col_idx * ratio.x + left_block_width - block_width;
-                                let band_write_range = col_start..col_start + block_width;
-                                block_buff[band_write_range].fill(*read_pixel);
-                            }
-
-                            block_buff
-                                .chunks_exact_mut(view_shape.x)
-                                .into_iter()
-                                //.par_chunks_exact(view_shape_x)
-                                .reduce(|lhc, mut _rhc| {
-                                    _rhc.copy_from_slice(lhc);
-                                    _rhc
-                                });
-                        }
-
-                        Ok(())
+                        let read_buff = read_band.reader.read_to_buffer(read_bounds)?;
+                        ResolutionChunker::new(view_bounds, read_bounds)
+                            .read_resolution_chucked(read_buff.as_ref(), band_buff)
                     }
                 }
             })

@@ -5,8 +5,8 @@ pub enum RusterioError {
     /// lib errors
     #[error(transparent)]
     GdalError(#[from] gdal::errors::GdalError),
-    #[error(transparent)]
     /// crate mod errors
+    #[error(transparent)]
     CrsGeometryError(#[from] crate::crs_geo::CrsGeometryError),
     #[error(transparent)]
     NoIntersection(#[from] crate::intersection::IntersectionError),
